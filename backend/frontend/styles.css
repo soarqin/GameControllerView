@@ -1,0 +1,77 @@
+* {
+    margin: 0;
+    padding: 0;
+    box-sizing: border-box;
+}
+
+body {
+    background-color: #1a1a2e;
+    color: #e0e0e0;
+    font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+    min-height: 100vh;
+    display: flex;
+    justify-content: center;
+    align-items: flex-start;
+}
+
+#app {
+    width: 100%;
+    max-width: 900px;
+    padding: 20px;
+}
+
+#header {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    margin-bottom: 16px;
+}
+
+#header h1 {
+    font-size: 1.4em;
+    font-weight: 600;
+    color: #e0e0e0;
+}
+
+#status {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    font-size: 0.9em;
+}
+
+.status-dot {
+    width: 10px;
+    height: 10px;
+    border-radius: 50%;
+    display: inline-block;
+}
+
+.status-dot.connected {
+    background-color: #4ade80;
+    box-shadow: 0 0 6px #4ade80;
+}
+
+.status-dot.disconnected {
+    background-color: #f87171;
+    box-shadow: 0 0 6px #f87171;
+}
+
+#controller-info {
+    margin-bottom: 16px;
+    font-size: 0.95em;
+    color: #a0a0b0;
+}
+
+#canvas-container {
+    display: flex;
+    justify-content: center;
+}
+
+#gamepad-canvas {
+    background-color: #16213e;
+    border-radius: 12px;
+    border: 1px solid #2a2a4a;
+    max-width: 100%;
+    height: auto;
+}

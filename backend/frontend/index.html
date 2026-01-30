@@ -1,0 +1,27 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>GameControllerView</title>
+    <link rel="stylesheet" href="styles.css">
+</head>
+<body>
+    <div id="app">
+        <div id="header">
+            <h1>GameControllerView</h1>
+            <div id="status">
+                <span id="ws-status" class="status-dot disconnected"></span>
+                <span id="ws-text">Disconnected</span>
+            </div>
+        </div>
+        <div id="controller-info">
+            <span id="controller-name">No controller detected</span>
+        </div>
+        <div id="canvas-container">
+            <canvas id="gamepad-canvas" width="800" height="500"></canvas>
+        </div>
+    </div>
+    <script src="app.js"></script>
+</body>
+</html>

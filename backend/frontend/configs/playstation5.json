@@ -1,47 +1,50 @@
 {
     "name": "PlayStation 5 Controller",
     "body": {
-        "x": 160,
-        "y": 80,
+        "x": 10,
+        "y": 40,
         "width": 480,
         "height": 280,
         "radius": 40
     },
     "faceButtons": {
         "radius": 18,
-        "a": { "x": 560, "y": 240 },
-        "b": { "x": 595, "y": 205 },
-        "x": { "x": 525, "y": 205 },
-        "y": { "x": 560, "y": 170 }
+        "a": { "x": 410, "y": 200, "label": { "text": "×", "color": "#4CAF50" } },
+        "b": { "x": 445, "y": 165, "label": { "text": "○", "color": "#F44336" } },
+        "x": { "x": 375, "y": 165, "label": { "text": "□", "color": "#2196F3" } },
+        "y": { "x": 410, "y": 130, "label": { "text": "△", "color": "#FFC107" } },
+        "label": { "fontSize": 16, "fontWeight": "bold" }
     },
     "dpad": {
-        "x": 240,
-        "y": 205,
-        "size": 28,
-        "armWidth": 20
+        "x": 90,
+        "y": 165,
+        "size": 40,
+        "armWidth": 30
     },
     "shoulders": {
-        "lb": { "x": 195, "y": 85, "width": 80, "height": 30, "radius": 8 },
-        "rb": { "x": 525, "y": 85, "width": 80, "height": 30, "radius": 8 }
+        "lb": { "x": 45, "y": 45, "width": 80, "height": 30, "radius": 8, "label": { "text": "L1" } },
+        "rb": { "x": 375, "y": 45, "width": 80, "height": 30, "radius": 8, "label": { "text": "R1" } },
+        "label": { "fontSize": 15, "fontWeight": "bold" }
     },
     "triggers": {
-        "lt": { "x": 210, "y": 55, "width": 55, "height": 45, "radius": 8 },
-        "rt": { "x": 535, "y": 55, "width": 55, "height": 45, "radius": 8 }
+        "lt": { "x": 60, "y": 15, "width": 55, "height": 45, "radius": 8, "label": { "text": "L2" } },
+        "rt": { "x": 385, "y": 15, "width": 55, "height": 45, "radius": 8, "label": { "text": "R2" } },
+        "label": { "fontSize": 13, "fontWeight": "bold" }
     },
     "sticks": {
-        "left": { "x": 340, "y": 285, "baseRadius": 38, "knobRadius": 20 },
-        "right": { "x": 460, "y": 285, "baseRadius": 38, "knobRadius": 20 }
+        "left": { "x": 190, "y": 245, "baseRadius": 38, "knobRadius": 20 },
+        "right": { "x": 310, "y": 245, "baseRadius": 38, "knobRadius": 20 }
     },
     "touchpad": {
-        "x": 340,
-        "y": 145,
+        "x": 190,
+        "y": 105,
         "width": 120,
         "height": 70,
         "radius": 8
     },
     "centerButtons": {
-        "back": { "x": 280, "y": 145, "width": 40, "height": 18, "radius": 4 },
-        "start": { "x": 480, "y": 145, "width": 40, "height": 18, "radius": 4 },
-        "guide": { "x": 400, "y": 250, "radius": 14 }
+        "back": { "x": 130, "y": 105, "width": 40, "height": 18, "radius": 4, "label": { "text": "SHARE", "fontSize": 10 } },
+        "start": { "x": 330, "y": 105, "width": 40, "height": 18, "radius": 4, "label": { "text": "OPTION", "fontSize": 10 } },
+        "guide": { "x": 250, "y": 210, "radius": 14, "label": { "text": "PS", "fontSize": 14, "fontWeight": "bold" } }
     }
 }

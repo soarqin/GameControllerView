@@ -107,22 +107,16 @@ func (r *Reader) processEvents() {
 			r.removeJoystick(devEvent.Which)
 
 		case sdl.EventJoystickButtonDown:
-			be := event.JButton()
-			log.Printf("[DEBUG] Button DOWN: index=%d joystick=%d", be.Button, be.Which)
+			// Button press handled in poll loop
 
 		case sdl.EventJoystickButtonUp:
-			be := event.JButton()
-			log.Printf("[DEBUG] Button UP:   index=%d joystick=%d", be.Button, be.Which)
+			// Button release handled in poll loop
 
 		case sdl.EventJoystickAxisMotion:
-			ae := event.JAxis()
-			if ae.Value > 8000 || ae.Value < -8000 {
-				log.Printf("[DEBUG] Axis: index=%d value=%d joystick=%d", ae.Axis, ae.Value, ae.Which)
-			}
+			// Axis motion handled in poll loop
 
 		case sdl.EventJoystickHatMotion:
-			he := event.JHat()
-			log.Printf("[DEBUG] Hat: index=%d value=0x%02X joystick=%d", he.Hat, he.Value, he.Which)
+			// Hat motion handled in poll loop
 		}
 	}
 }

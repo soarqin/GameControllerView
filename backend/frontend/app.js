@@ -21,6 +21,11 @@ const state = {
 let currentConfig = null;
 const configCache = {};
 
+// Simple mode: only draw controller elements, no background
+let simpleMode = false;
+// Body alpha channel (0-1)
+let bodyAlpha = 1.0;
+
 // ============================================================
 // WebSocket Connection
 // ============================================================
@@ -185,7 +190,7 @@ function updateControllerInfo() {
 let loadedConfigType = '';
 
 function loadConfigIfNeeded() {
-    const type = state.controllerType || 'generic';
+    const type = state.controllerType || 'xbox';
     if (type === loadedConfigType) return;
 
     loadedConfigType = type;
@@ -230,14 +235,36 @@ const ctx = canvas.getContext('2d');
 // High-DPI support
 function setupCanvas() {
     const dpr = window.devicePixelRatio || 1;
-    const rect = canvas.getBoundingClientRect();
-    canvas.width = rect.width * dpr;
-    canvas.height = rect.height * dpr;
-    ctx.scale(dpr, dpr);
+
+    if (simpleMode) {
+        // Full viewport in simple mode
+        const vw = window.innerWidth;
+        const vh = window.innerHeight;
+        canvas.style.width = vw + 'px';
+        canvas.style.height = vh + 'px';
+        canvas.width = vw * dpr;
+        canvas.height = vh * dpr;
+
+        // Calculate scale to fit WxH while maintaining aspect ratio
+        const scaleX = vw / W;
+        const scaleY = vh / H;
+        const scale = Math.min(scaleX, scaleY);
+
+        // Center the controller
+        const offsetX = (vw - W * scale) / 2;
+        const offsetY = (vh - H * scale) / 2;
+
+        ctx.setTransform(dpr * scale, 0, 0, dpr * scale, dpr * offsetX, dpr * offsetY);
+    } else {
+        const rect = canvas.getBoundingClientRect();
+        canvas.width = rect.width * dpr;
+        canvas.height = rect.height * dpr;
+        ctx.scale(dpr, dpr);
+    }
 }
 
-const W = 800;
-const H = 500;
+const W = 500;
+const H = 330;
 
 // Colors
 const COLORS = {
@@ -262,11 +289,21 @@ const COLORS = {
     faceY: '#fbbf24',
 };
 
+// Helper: Convert hex color to rgba with alpha
+function hexToRgba(hex, alpha) {
+    const r = parseInt(hex.slice(1, 3), 16);
+    const g = parseInt(hex.slice(3, 5), 16);
+    const b = parseInt(hex.slice(5, 7), 16);
+    return `rgba(${r}, ${g}, ${b}, ${alpha})`;
+}
+
 function render() {
     ctx.clearRect(0, 0, W, H);
 
     if (!state.connected) {
-        drawDisconnected();
+        if (!simpleMode) {
+            drawDisconnected();
+        }
     } else {
         drawController();
     }
@@ -287,12 +324,15 @@ function drawDisconnected() {
 function drawController() {
     const cfg = currentConfig;
     if (!cfg) {
-        drawDisconnected();
+        if (!simpleMode) {
+            drawDisconnected();
+        }
         return;
     }
 
     // Draw triggers first (will be partially covered by body)
     drawTriggers(cfg);
+    // Draw body (keep in simple mode)
     drawBody(cfg);
     drawDpad(cfg);
     drawFaceButtons(cfg);
@@ -309,7 +349,7 @@ function drawBody(cfg) {
     const body = cfg.body;
     if (!body) return;
 
-    ctx.fillStyle = COLORS.outlineFill;
+    ctx.fillStyle = hexToRgba(COLORS.outlineFill, bodyAlpha);
     ctx.strokeStyle = COLORS.outline;
     ctx.lineWidth = 2;
 
@@ -445,99 +485,82 @@ function drawFaceButtons(cfg) {
     if (!buttons) return;
 
     const r = buttons.radius || 18;
+    const defaultLabelConfig = buttons.label || { fontSize: r, fontWeight: 'normal' };
 
-    // Get button labels based on controller type
-    const getButtonLabels = () => {
-        switch (state.controllerType) {
-            case 'playstation':
-            case 'playstation5':
-                return {
-                    a: '×',
-                    b: '○',
-                    x: '□',
-                    y: '△'
-                };
-            case 'switch_pro':
-                return {
-                    a: 'B',
-                    b: 'A',
-                    x: 'Y',
-                    y: 'X'
-                };
-            default:
-                return {
-                    a: 'A',
-                    b: 'B',
-                    x: 'X',
-                    y: 'Y'
-                };
+    // Button definitions - colors are defaults, overridden by config
+    const btnDefs = [
+        { key: 'a', defaultColor: COLORS.faceA },
+        { key: 'b', defaultColor: COLORS.faceB },
+        { key: 'x', defaultColor: COLORS.faceX },
+        { key: 'y', defaultColor: COLORS.faceY },
+    ];
+
+    // PlayStation symbol drawing helpers
+    const psSymbols = {
+        '×': (ctx, x, y, size) => {
+            ctx.beginPath();
+            ctx.moveTo(x - size, y - size);
+            ctx.lineTo(x + size, y + size);
+            ctx.moveTo(x + size, y - size);
+            ctx.lineTo(x - size, y + size);
+            ctx.stroke();
+        },
+        '○': (ctx, x, y, size) => {
+            ctx.beginPath();
+            ctx.arc(x, y, size, 0, Math.PI * 2);
+            ctx.stroke();
+        },
+        '□': (ctx, x, y, size) => {
+            ctx.beginPath();
+            ctx.rect(x - size, y - size, size * 2, size * 2);
+            ctx.stroke();
+        },
+        '△': (ctx, x, y, size) => {
+            ctx.beginPath();
+            ctx.moveTo(x, y - size);
+            ctx.lineTo(x + size, y + size);
+            ctx.lineTo(x - size, y + size);
+            ctx.closePath();
+            ctx.stroke();
         }
     };
-
-    const labels = getButtonLabels();
-
-    const btnDefs = [
-        { key: 'a', label: labels.a, color: COLORS.faceA },
-        { key: 'b', label: labels.b, color: COLORS.faceB },
-        { key: 'x', label: labels.x, color: COLORS.faceX },
-        { key: 'y', label: labels.y, color: COLORS.faceY },
-    ];
 
     for (const def of btnDefs) {
         const pos = buttons[def.key];
         if (!pos) continue;
 
         const pressed = state.buttons[def.key];
+        const posLabelConfig = pos.label || {};
+        const labelText = posLabelConfig.text;
+        const labelColor = posLabelConfig.color || def.defaultColor;
+        const fontSize = posLabelConfig.fontSize || defaultLabelConfig.fontSize || r;
+        const fontWeight = posLabelConfig.fontWeight || defaultLabelConfig.fontWeight || 'normal';
 
+        // Draw button background
         ctx.beginPath();
         ctx.arc(pos.x, pos.y, r, 0, Math.PI * 2);
-        ctx.fillStyle = pressed ? def.color : COLORS.buttonDefault;
+        ctx.fillStyle = pressed ? labelColor : COLORS.buttonDefault;
         ctx.fill();
-        ctx.strokeStyle = def.color;
+        ctx.strokeStyle = labelColor;
         ctx.lineWidth = 2;
         ctx.stroke();
 
-        // Draw PlayStation symbols instead of text
-        const isPlayStation = state.controllerType === 'playstation' || state.controllerType === 'playstation5';
-        ctx.fillStyle = pressed ? COLORS.buttonLabelPressed : def.color;
-        ctx.strokeStyle = pressed ? COLORS.buttonLabelPressed : def.color;
+        // Draw label if text exists
+        if (!labelText) continue;
+
+        ctx.fillStyle = pressed ? COLORS.buttonLabelPressed : labelColor;
+        ctx.strokeStyle = pressed ? COLORS.buttonLabelPressed : labelColor;
         ctx.lineWidth = 2;
 
-        if (isPlayStation) {
+        // Check if this is a PlayStation symbol
+        if (psSymbols[labelText]) {
             const symbolSize = r * 0.5;
-            switch (def.key) {
-                case 'a': // × (cross)
-                    ctx.beginPath();
-                    ctx.moveTo(pos.x - symbolSize, pos.y - symbolSize);
-                    ctx.lineTo(pos.x + symbolSize, pos.y + symbolSize);
-                    ctx.moveTo(pos.x + symbolSize, pos.y - symbolSize);
-                    ctx.lineTo(pos.x - symbolSize, pos.y + symbolSize);
-                    ctx.stroke();
-                    break;
-                case 'b': // ○ (circle)
-                    ctx.beginPath();
-                    ctx.arc(pos.x, pos.y, symbolSize, 0, Math.PI * 2);
-                    ctx.stroke();
-                    break;
-                case 'x': // □ (square)
-                    ctx.beginPath();
-                    ctx.rect(pos.x - symbolSize, pos.y - symbolSize, symbolSize * 2, symbolSize * 2);
-                    ctx.stroke();
-                    break;
-                case 'y': // △ (triangle)
-                    ctx.beginPath();
-                    ctx.moveTo(pos.x, pos.y - symbolSize);
-                    ctx.lineTo(pos.x + symbolSize, pos.y + symbolSize);
-                    ctx.lineTo(pos.x - symbolSize, pos.y + symbolSize);
-                    ctx.closePath();
-                    ctx.stroke();
-                    break;
-            }
+            psSymbols[labelText](ctx, pos.x, pos.y, symbolSize);
         } else {
-            ctx.font = `bold ${r}px "Segoe UI", sans-serif`;
+            ctx.font = `${fontWeight} ${fontSize}px "Segoe UI", sans-serif`;
             ctx.textAlign = 'center';
             ctx.textBaseline = 'middle';
-            ctx.fillText(def.label, pos.x, pos.y + 1);
+            ctx.fillText(labelText, pos.x, pos.y + 1);
         }
     }
 }
@@ -547,23 +570,17 @@ function drawShoulderButtons(cfg) {
     const shoulders = cfg.shoulders;
     if (!shoulders) return;
 
-    // Get shoulder button labels based on controller type
-    const getShoulderLabel = (side) => {
-        switch (state.controllerType) {
-            case 'playstation':
-            case 'playstation5':
-                return side === 'lb' ? 'L1' : 'R1';
-            case 'switch_pro':
-                return side === 'lb' ? 'L' : 'R';
-            default:
-                return side.toUpperCase();
-        }
-    };
+    const defaultLabelConfig = shoulders.label || { fontSize: 15, fontWeight: 'normal' };
 
     for (const side of ['lb', 'rb']) {
         const s = shoulders[side];
         if (!s) continue;
         const pressed = state.buttons[side];
+
+        const posLabelConfig = s.label || {};
+        const labelText = posLabelConfig.text;
+        const fontSize = posLabelConfig.fontSize || defaultLabelConfig.fontSize || 15;
+        const fontWeight = posLabelConfig.fontWeight || defaultLabelConfig.fontWeight || 'normal';
 
         ctx.fillStyle = pressed ? COLORS.buttonPressed : COLORS.buttonDefault;
         ctx.strokeStyle = COLORS.outline;
@@ -573,11 +590,13 @@ function drawShoulderButtons(cfg) {
         ctx.fill();
         ctx.stroke();
 
-        ctx.fillStyle = pressed ? COLORS.buttonLabelPressed : COLORS.buttonLabel;
-        ctx.font = 'bold 15px "Segoe UI", sans-serif';
-        ctx.textAlign = 'center';
-        ctx.textBaseline = 'middle';
-        ctx.fillText(getShoulderLabel(side), s.x + s.width / 2, s.y + s.height / 2);
+        if (labelText) {
+            ctx.fillStyle = pressed ? COLORS.buttonLabelPressed : COLORS.buttonLabel;
+            ctx.font = `${fontWeight} ${fontSize}px "Segoe UI", sans-serif`;
+            ctx.textAlign = 'center';
+            ctx.textBaseline = 'middle';
+            ctx.fillText(labelText, s.x + s.width / 2, s.y + s.height / 2);
+        }
     }
 }
 
@@ -614,29 +633,24 @@ function drawTriggerLabels(cfg) {
     const triggers = cfg.triggers;
     if (!triggers) return;
 
-    // Get trigger labels based on controller type
-    const getTriggerLabel = (side) => {
-        switch (state.controllerType) {
-            case 'playstation':
-            case 'playstation5':
-                return side === 'lt' ? 'L2' : 'R2';
-            case 'switch_pro':
-                return side === 'lt' ? 'ZL' : 'ZR';
-            default:
-                return side.toUpperCase();
-        }
-    };
+    const defaultLabelConfig = triggers.label || { fontSize: 13, fontWeight: 'normal' };
+    const fontSize = defaultLabelConfig.fontSize || 13;
+    const fontWeight = defaultLabelConfig.fontWeight || 'normal';
 
     for (const side of ['lt', 'rt']) {
         const t = triggers[side];
         if (!t) continue;
 
-        // Label (positioned in upper portion of trigger to avoid body border)
-        ctx.fillStyle = COLORS.buttonLabel;
-        ctx.font = 'bold 13px "Segoe UI", sans-serif';
-        ctx.textAlign = 'center';
-        ctx.textBaseline = 'middle';
-        ctx.fillText(getTriggerLabel(side), t.x + t.width / 2, t.y + t.height * 0.3);
+        const posLabelConfig = t.label || {};
+        const labelText = posLabelConfig.text;
+
+        if (labelText) {
+            ctx.fillStyle = COLORS.buttonLabel;
+            ctx.font = `${fontWeight} ${fontSize}px "Segoe UI", sans-serif`;
+            ctx.textAlign = 'center';
+            ctx.textBaseline = 'middle';
+            ctx.fillText(labelText, t.x + t.width / 2, t.y + t.height * 0.3);
+        }
     }
 }
 
@@ -706,44 +720,35 @@ function drawCenterButtons(cfg) {
     const center = cfg.centerButtons;
     if (!center) return;
 
-    // Get center button labels based on controller type
-    const getCenterButtonLabel = (key) => {
-        switch (state.controllerType) {
-            case 'playstation':
-                if (key === 'back') return 'SELECT';
-                if (key === 'start') return 'START';
-                if (key === 'guide') return 'PS';
-                return key.toUpperCase();
-            case 'playstation5':
-                if (key === 'back') return 'SHARE';
-                if (key === 'start') return 'OPTION';
-                if (key === 'guide') return 'PS';
-                return key.toUpperCase();
-            case 'switch_pro':
-                if (key === 'back') return '-';
-                if (key === 'start') return '+';
-                if (key === 'guide') return 'H';
-                if (key === 'capture') return 'C';
-                return key.toUpperCase();
-            default:
-                if (key === 'back') return 'BACK';
-                if (key === 'start') return 'START';
-                if (key === 'guide') return 'XBOX';
-                return key.toUpperCase();
+    // Button keys to iterate over
+    const btnKeys = ['back', 'start', 'guide', 'capture'];
+
+    // Get default label config from centerButtons
+    const defaultLabelConfig = center.label || { fontSize: 14, fontWeight: 'bold' };
+
+    // Shape drawing functions
+    const shapeDrawers = {
+        'triangle_right': (b) => {
+            const w = b.width;
+            const h = b.height;
+            ctx.beginPath();
+            ctx.moveTo(b.x, b.y); // left top
+            ctx.lineTo(b.x + w, b.y + h / 2); // right point (tip)
+            ctx.lineTo(b.x, b.y + h); // left bottom
+            ctx.closePath();
         }
     };
 
-    const btnDefs = [
-        { key: 'back', label: getCenterButtonLabel('back') },
-        { key: 'start', label: getCenterButtonLabel('start') },
-        { key: 'guide', label: getCenterButtonLabel('guide') },
-        { key: 'capture', label: getCenterButtonLabel('capture') },
-    ];
-
-    for (const def of btnDefs) {
-        const b = center[def.key];
+    for (const key of btnKeys) {
+        const b = center[key];
         if (!b) continue;
-        const pressed = state.buttons[def.key];
+        const pressed = state.buttons[key];
+
+        // Get label config for this specific button
+        const buttonLabelConfig = b.label || {};
+        const labelText = buttonLabelConfig.text;
+        const fontSize = buttonLabelConfig.fontSize || defaultLabelConfig.fontSize || 14;
+        const fontWeight = buttonLabelConfig.fontWeight || defaultLabelConfig.fontWeight || 'bold';
 
         // Check if button is circular (has radius but no width/height)
         const isCircular = b.radius && !b.width && !b.height;
@@ -758,53 +763,37 @@ function drawCenterButtons(cfg) {
             ctx.lineWidth = 2;
             ctx.stroke();
 
-            // Show label for guide (HOME), capture, and back/start buttons
-            if (def.label && (def.key === 'guide' || def.key === 'capture' || def.key === 'back' || def.key === 'start')) {
+            // Show label if text exists
+            if (labelText) {
                 ctx.fillStyle = pressed ? COLORS.buttonLabelPressed : COLORS.buttonLabel;
-                // Use larger font for Switch Pro's -/+ buttons
-                const fontSize = (state.controllerType === 'switch_pro' && (def.key === 'back' || def.key === 'start')) ? r + 3 : r;
-                ctx.font = `bold ${fontSize}px "Segoe UI", sans-serif`;
+                ctx.font = `${fontWeight} ${fontSize}px "Segoe UI", sans-serif`;
                 ctx.textAlign = 'center';
                 ctx.textBaseline = 'middle';
-                // Move -/+ buttons text up by 1 pixel
-                const yOffset = (def.key === 'back' || def.key === 'start') ? 0 : 1;
-                ctx.fillText(def.label, b.x, b.y + yOffset);
+                ctx.fillText(labelText, b.x, b.y + 1);
             }
         } else {
-            // Select/Start are rectangular or special shapes
+            // Rectangular or special shape buttons
             ctx.fillStyle = pressed ? COLORS.buttonPressed : COLORS.buttonDefault;
             ctx.strokeStyle = COLORS.outline;
             ctx.lineWidth = 1.5;
 
-            // Check for special shapes
-            if (b.shape === 'triangle_right') {
-                // Right-pointing triangle (PS3 START button)
-                // Left side is a straight vertical line, right side comes to a point
-                const w = b.width;
-                const h = b.height;
-                ctx.beginPath();
-                ctx.moveTo(b.x, b.y); // left top
-                ctx.lineTo(b.x + w, b.y + h / 2); // right point (tip)
-                ctx.lineTo(b.x, b.y + h); // left bottom
-                ctx.closePath();
-                ctx.fill();
-                ctx.stroke();
+            // Check for special shapes from config
+            const shapeDrawer = b.shape ? shapeDrawers[b.shape] : null;
+            if (shapeDrawer) {
+                shapeDrawer(b);
             } else {
                 roundRect(ctx, b.x, b.y, b.width, b.height, b.radius || 4);
-                ctx.fill();
-                ctx.stroke();
             }
+            ctx.fill();
+            ctx.stroke();
 
-            // Don't show text for SELECT and START buttons on PlayStation
-            const showLabel = !((state.controllerType === 'playstation' || state.controllerType === 'playstation5')
-                            && (def.key === 'back' || def.key === 'start'));
-
-            if (showLabel) {
+            // Show label if text exists
+            if (labelText) {
                 ctx.fillStyle = pressed ? COLORS.buttonLabelPressed : COLORS.buttonLabel;
-                ctx.font = 'bold 9px "Segoe UI", sans-serif';
+                ctx.font = `${fontWeight} ${fontSize}px "Segoe UI", sans-serif`;
                 ctx.textAlign = 'center';
                 ctx.textBaseline = 'middle';
-                ctx.fillText(def.label, b.x + b.width / 2, b.y + b.height / 2 + 1);
+                ctx.fillText(labelText, b.x + b.width / 2, b.y + b.height / 2 + 1);
             }
         }
     }
@@ -833,6 +822,37 @@ function roundRect(ctx, x, y, w, h, r) {
 // ============================================================
 
 function init() {
+    // Check URL parameters
+    const urlParams = new URLSearchParams(window.location.search);
+    simpleMode = urlParams.get('simple') === '1';
+
+    // Parse alpha parameter (0-1)
+    const alphaParam = urlParams.get('alpha');
+    if (alphaParam !== null) {
+        const alpha = parseFloat(alphaParam);
+        if (!isNaN(alpha) && alpha >= 0 && alpha <= 1) {
+            bodyAlpha = alpha;
+        }
+    }
+
+    // Apply simple mode styles
+    if (simpleMode) {
+        document.body.style.backgroundColor = 'transparent';
+        canvas.style.backgroundColor = 'transparent';
+        canvas.style.border = 'none';
+        canvas.style.borderRadius = '0';
+        // Hide header and controller info in simple mode
+        const header = document.getElementById('header');
+        const controllerInfo = document.getElementById('controller-info');
+        const app = document.getElementById('app');
+        if (header) header.style.display = 'none';
+        if (controllerInfo) controllerInfo.style.display = 'none';
+        if (app) {
+            app.style.padding = '0';
+            app.style.maxWidth = 'none';
+        }
+    }
+
     setupCanvas();
     window.addEventListener('resize', setupCanvas);
 

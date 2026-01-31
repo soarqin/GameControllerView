@@ -1,5 +1,5 @@
 {
-    "name": "Xbox Controller",
+    "name": "PlayStation 5 Controller",
     "body": {
         "x": 160,
         "y": 80,
@@ -15,8 +15,8 @@
         "y": { "x": 560, "y": 170 }
     },
     "dpad": {
-        "x": 340,
-        "y": 285,
+        "x": 240,
+        "y": 205,
         "size": 28,
         "armWidth": 20
     },
@@ -29,12 +29,19 @@
         "rt": { "x": 535, "y": 55, "width": 55, "height": 45, "radius": 8 }
     },
     "sticks": {
-        "left": { "x": 240, "y": 205, "baseRadius": 38, "knobRadius": 20 },
+        "left": { "x": 340, "y": 285, "baseRadius": 38, "knobRadius": 20 },
         "right": { "x": 460, "y": 285, "baseRadius": 38, "knobRadius": 20 }
     },
+    "touchpad": {
+        "x": 340,
+        "y": 145,
+        "width": 120,
+        "height": 70,
+        "radius": 8
+    },
     "centerButtons": {
-        "back": { "x": 340, "y": 185, "width": 50, "height": 22, "radius": 5 },
-        "start": { "x": 410, "y": 185, "width": 50, "height": 22, "radius": 5 },
-        "guide": { "x": 400, "y": 125, "radius": 16 }
+        "back": { "x": 280, "y": 145, "width": 40, "height": 18, "radius": 4 },
+        "start": { "x": 480, "y": 145, "width": 40, "height": 18, "radius": 4 },
+        "guide": { "x": 400, "y": 250, "radius": 14 }
     }
 }

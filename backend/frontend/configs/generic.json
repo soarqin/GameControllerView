@@ -33,8 +33,8 @@
         "right": { "x": 480, "y": 310, "baseRadius": 38, "knobRadius": 20 }
     },
     "centerButtons": {
-        "select": { "x": 345, "y": 195, "width": 36, "height": 20, "radius": 4 },
+        "back": { "x": 345, "y": 195, "width": 36, "height": 20, "radius": 4 },
         "start": { "x": 420, "y": 195, "width": 36, "height": 20, "radius": 4 },
-        "home": { "x": 400, "y": 155, "radius": 16 }
+        "guide": { "x": 400, "y": 155, "radius": 16 }
     }
 }

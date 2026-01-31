@@ -290,15 +290,19 @@ func (r *Reader) pollState() {
 			state.Buttons.LB = pressed
 		case "rb":
 			state.Buttons.RB = pressed
-		case "select":
-			state.Buttons.Select = pressed
+		case "back":
+			state.Buttons.Back = pressed
 		case "start":
 			state.Buttons.Start = pressed
-		case "home":
-			state.Buttons.Home = pressed
-		case "l3":
+		case "guide":
+			state.Buttons.Guide = pressed
+		case "touchpad":
+			state.Buttons.Touchpad = pressed
+		case "capture":
+			state.Buttons.Capture = pressed
+		case "ls":
 			state.Sticks.Left.Pressed = pressed
-		case "r3":
+		case "rs":
 			state.Sticks.Right.Pressed = pressed
 		}
 	}

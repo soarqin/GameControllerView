@@ -1,40 +1,40 @@
 {
-    "name": "PlayStation Controller",
+    "name": "PlayStation 3 Controller",
     "body": {
-        "x": 120,
+        "x": 160,
         "y": 80,
-        "width": 560,
-        "height": 340,
+        "width": 480,
+        "height": 280,
         "radius": 40
     },
     "faceButtons": {
         "radius": 18,
-        "a": { "x": 580, "y": 270 },
-        "b": { "x": 620, "y": 230 },
-        "x": { "x": 540, "y": 230 },
-        "y": { "x": 580, "y": 190 }
+        "a": { "x": 560, "y": 240 },
+        "b": { "x": 595, "y": 205 },
+        "x": { "x": 525, "y": 205 },
+        "y": { "x": 560, "y": 170 }
     },
     "dpad": {
-        "x": 220,
-        "y": 230,
+        "x": 240,
+        "y": 205,
         "size": 28,
         "armWidth": 20
     },
     "shoulders": {
-        "lb": { "x": 155, "y": 85, "width": 90, "height": 30, "radius": 8 },
-        "rb": { "x": 555, "y": 85, "width": 90, "height": 30, "radius": 8 }
+        "lb": { "x": 195, "y": 85, "width": 80, "height": 30, "radius": 8 },
+        "rb": { "x": 525, "y": 85, "width": 80, "height": 30, "radius": 8 }
     },
     "triggers": {
-        "lt": { "x": 170, "y": 20, "width": 60, "height": 50, "radius": 8 },
-        "rt": { "x": 570, "y": 20, "width": 60, "height": 50, "radius": 8 }
+        "lt": { "x": 210, "y": 55, "width": 55, "height": 45, "radius": 8 },
+        "rt": { "x": 535, "y": 55, "width": 55, "height": 45, "radius": 8 }
     },
     "sticks": {
-        "left": { "x": 310, "y": 310, "baseRadius": 38, "knobRadius": 20 },
-        "right": { "x": 480, "y": 310, "baseRadius": 38, "knobRadius": 20 }
+        "left": { "x": 340, "y": 285, "baseRadius": 38, "knobRadius": 20 },
+        "right": { "x": 460, "y": 285, "baseRadius": 38, "knobRadius": 20 }
     },
     "centerButtons": {
-        "select": { "x": 345, "y": 195, "width": 36, "height": 20, "radius": 4 },
-        "start": { "x": 420, "y": 195, "width": 36, "height": 20, "radius": 4 },
-        "home": { "x": 400, "y": 155, "radius": 16 }
+        "back": { "x": 325, "y": 165, "width": 45, "height": 20, "radius": 5 },
+        "start": { "x": 425, "y": 164, "width": 40, "height": 22, "radius": 5, "shape": "triangle_right" },
+        "guide": { "x": 400, "y": 240, "radius": 16 }
     }
 }

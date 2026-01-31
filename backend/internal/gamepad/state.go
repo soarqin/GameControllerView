@@ -17,15 +17,17 @@ type TriggerState struct {
 }
 
 type ButtonState struct {
-	A      bool `json:"a"`
-	B      bool `json:"b"`
-	X      bool `json:"x"`
-	Y      bool `json:"y"`
-	LB     bool `json:"lb"`
-	RB     bool `json:"rb"`
-	Select bool `json:"select"`
-	Start  bool `json:"start"`
-	Home   bool `json:"home"`
+	A        bool `json:"a"`
+	B        bool `json:"b"`
+	X        bool `json:"x"`
+	Y        bool `json:"y"`
+	LB       bool `json:"lb"`
+	RB       bool `json:"rb"`
+	Back     bool `json:"back"`
+	Start    bool `json:"start"`
+	Guide    bool `json:"guide"`
+	Touchpad bool `json:"touchpad"`
+	Capture  bool `json:"capture"`
 }
 
 type DpadState struct {

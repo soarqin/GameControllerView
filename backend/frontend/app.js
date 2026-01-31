@@ -25,6 +25,8 @@ const configCache = {};
 let simpleMode = false;
 // Body alpha channel (0-1)
 let bodyAlpha = 1.0;
+// Selected player index (1-based, default 1)
+let selectedPlayerIndex = 1;
 
 // ============================================================
 // WebSocket Connection
@@ -43,6 +45,12 @@ function connectWebSocket() {
     ws.onopen = () => {
         reconnectDelay = 1000;
         setWSStatus(true);
+        // Send selected player index to backend
+        const selectMsg = JSON.stringify({
+            type: 'select_player',
+            playerIndex: selectedPlayerIndex
+        });
+        ws.send(selectMsg);
     };
 
     ws.onclose = () => {
@@ -114,6 +122,11 @@ function handleMessage(msg) {
                 applyFullState(msg.data);
             }
             break;
+        case 'player_selected':
+            if (msg.playerIndex !== undefined) {
+                console.log(`Player ${msg.playerIndex} selected`);
+            }
+            break;
     }
 }
 
@@ -176,9 +189,9 @@ function applyDelta(changes) {
 function updateControllerInfo() {
     const el = document.getElementById('controller-name');
     if (state.connected && state.name) {
-        el.textContent = `${state.name} (${state.controllerType})`;
+        el.textContent = `Player ${selectedPlayerIndex}: ${state.name} (${state.controllerType})`;
     } else {
-        el.textContent = 'No controller detected';
+        el.textContent = `Player ${selectedPlayerIndex}: No controller detected`;
     }
     updateStatusIndicator();
 }
@@ -825,6 +838,15 @@ function init() {
     // Check URL parameters
     const urlParams = new URLSearchParams(window.location.search);
     simpleMode = urlParams.get('simple') === '1';
+
+    // Parse player index parameter (p)
+    const playerParam = urlParams.get('p');
+    if (playerParam !== null) {
+        const p = parseInt(playerParam, 10);
+        if (!isNaN(p) && p >= 1) {
+            selectedPlayerIndex = p;
+        }
+    }
 
     // Parse alpha parameter (0-1)
     const alphaParam = urlParams.get('alpha');

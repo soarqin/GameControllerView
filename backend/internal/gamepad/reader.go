@@ -27,13 +27,14 @@ type joystickInfo struct {
 
 // Reader reads gamepad input from SDL3 Joystick API and emits state changes.
 type Reader struct {
-	state     GamepadState
-	prevState GamepadState
-	joysticks map[sdl.JoystickID]*joystickInfo
-	activeID  sdl.JoystickID // the first connected joystick
-	hasActive bool
-	changes   chan GamepadState
-	mu        sync.RWMutex
+	state         GamepadState
+	prevState     GamepadState
+	joysticks     map[sdl.JoystickID]*joystickInfo
+	activeID      sdl.JoystickID // the first connected joystick
+	hasActive     bool
+	joystickOrder []sdl.JoystickID // maintain connection order
+	changes       chan GamepadState
+	mu            sync.RWMutex
 }
 
 func NewReader() *Reader {
@@ -53,6 +54,55 @@ func (r *Reader) CurrentState() GamepadState {
 	r.mu.RLock()
 	defer r.mu.RUnlock()
 	return r.state
+}
+
+// GetPlayerIndex returns the 1-based player index of the currently active joystick.
+func (r *Reader) GetPlayerIndex() int {
+	r.mu.RLock()
+	defer r.mu.RUnlock()
+	for i, id := range r.joystickOrder {
+		if id == r.activeID {
+			return i + 1
+		}
+	}
+	return 0
+}
+
+// SetActiveByPlayerIndex sets the active joystick by 1-based player index.
+// Returns true if successful, false if index is out of range.
+func (r *Reader) SetActiveByPlayerIndex(playerIndex int) bool {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+
+	if playerIndex < 1 || playerIndex > len(r.joystickOrder) {
+		return false
+	}
+
+	newID := r.joystickOrder[playerIndex-1]
+	if newID == r.activeID {
+		return true // Already active
+	}
+
+	info, exists := r.joysticks[newID]
+	if !exists || !sdl.JoystickConnected(info.joystick) {
+		return false
+	}
+
+	r.activeID = newID
+	r.hasActive = true
+	r.state.Connected = true
+	r.state.Name = info.name
+	r.state.ControllerType = info.mapping.Name
+	r.state.PlayerIndex = playerIndex
+
+	log.Printf("Active joystick switched to player %d: %s (ID=%d)", playerIndex, info.name, newID)
+
+	// Emit new state to notify clients
+	r.mu.Unlock() // Unlock before calling emitState which needs RLock
+	r.emitState()
+	r.mu.Lock() // Relock for defer
+
+	return true
 }
 
 // Run initializes SDL and runs the main event+polling loop on the current thread.
@@ -144,25 +194,31 @@ func (r *Reader) openJoystick(instanceID sdl.JoystickID) {
 		name:     name,
 		id:       jsID,
 	}
+
+	r.mu.Lock()
 	r.joysticks[jsID] = info
+	r.joystickOrder = append(r.joystickOrder, jsID)
+	r.mu.Unlock()
 
 	numAxes := sdl.GetNumJoystickAxes(js)
 	numButtons := sdl.GetNumJoystickButtons(js)
 	numHats := sdl.GetNumJoystickHats(js)
 
-	log.Printf("Joystick connected: %s (VID=%04X PID=%04X) mapping=%s axes=%d buttons=%d hats=%d",
-		name, vendorID, productID, mapping.Name, numAxes, numButtons, numHats)
+	playerIndex := len(r.joystickOrder)
+	log.Printf("Joystick connected: Player %d - %s (VID=%04X PID=%04X) mapping=%s axes=%d buttons=%d hats=%d",
+		playerIndex, name, vendorID, productID, mapping.Name, numAxes, numButtons, numHats)
 
 	// Use the first connected joystick as active
 	if !r.hasActive {
 		r.activeID = jsID
 		r.hasActive = true
-		log.Printf("Active joystick set: %s (ID=%d)", name, jsID)
+		log.Printf("Active joystick set to player %d: %s (ID=%d)", playerIndex, name, jsID)
 
 		r.mu.Lock()
 		r.state.Connected = true
 		r.state.Name = name
 		r.state.ControllerType = mapping.Name
+		r.state.PlayerIndex = playerIndex
 		r.mu.Unlock()
 
 		r.emitState()
@@ -175,9 +231,20 @@ func (r *Reader) removeJoystick(instanceID sdl.JoystickID) {
 		return
 	}
 
-	log.Printf("Joystick disconnected: %s", info.name)
+	log.Printf("Joystick disconnected: Player %d - %s", r.getPlayerIndexForID(instanceID), info.name)
 	sdl.CloseJoystick(info.joystick)
+
+	r.mu.Lock()
 	delete(r.joysticks, instanceID)
+	// Remove from joystickOrder
+	newOrder := make([]sdl.JoystickID, 0, len(r.joystickOrder))
+	for _, id := range r.joystickOrder {
+		if id != instanceID {
+			newOrder = append(newOrder, id)
+		}
+	}
+	r.joystickOrder = newOrder
+	r.mu.Unlock()
 
 	if r.hasActive && r.activeID == instanceID {
 		r.hasActive = false
@@ -187,17 +254,19 @@ func (r *Reader) removeJoystick(instanceID sdl.JoystickID) {
 			r.mu.Unlock()
 			r.emitState()
 		} else {
-			// Promote the next available joystick
-			for id, js := range r.joysticks {
-				if sdl.JoystickConnected(js.joystick) {
+			// Promote the next available joystick (by order)
+			for _, id := range r.joystickOrder {
+				if js, ok := r.joysticks[id]; ok && sdl.JoystickConnected(js.joystick) {
 					r.activeID = id
 					r.hasActive = true
-					log.Printf("Active joystick switched to: %s (ID=%d)", js.name, id)
+					playerIndex := r.getPlayerIndexForID(id)
+					log.Printf("Active joystick switched to player %d: %s (ID=%d)", playerIndex, js.name, id)
 
 					r.mu.Lock()
 					r.state.Connected = true
 					r.state.Name = js.name
 					r.state.ControllerType = js.mapping.Name
+					r.state.PlayerIndex = playerIndex
 					r.mu.Unlock()
 
 					r.emitState()
@@ -206,6 +275,16 @@ func (r *Reader) removeJoystick(instanceID sdl.JoystickID) {
 			}
 		}
 	}
+}
+
+// Helper to get player index for a joystick ID (1-based)
+func (r *Reader) getPlayerIndexForID(id sdl.JoystickID) int {
+	for i, jid := range r.joystickOrder {
+		if jid == id {
+			return i + 1
+		}
+	}
+	return 0
 }
 
 func (r *Reader) closeAll() {
@@ -231,6 +310,7 @@ func (r *Reader) pollState() {
 		Connected:      true,
 		ControllerType: mapping.Name,
 		Name:           info.name,
+		PlayerIndex:    r.GetPlayerIndex(),
 	}
 
 	// Read axes

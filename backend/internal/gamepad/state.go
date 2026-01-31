@@ -51,6 +51,7 @@ type GamepadState struct {
 	Connected      bool          `json:"connected"`
 	ControllerType string        `json:"controllerType"`
 	Name           string        `json:"name"`
+	PlayerIndex    int           `json:"playerIndex"`
 	Buttons        ButtonState   `json:"buttons"`
 	Dpad           DpadState     `json:"dpad"`
 	Sticks         SticksState   `json:"sticks"`

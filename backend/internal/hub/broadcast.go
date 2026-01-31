@@ -91,7 +91,7 @@ func (b *Broadcaster) sendFull(state gamepad.GamepadState) {
 		log.Printf("Error marshaling full message: %v", err)
 		return
 	}
-	b.hub.Broadcast(data)
+	b.hub.BroadcastToPlayer(data, state.PlayerIndex)
 }
 
 func (b *Broadcaster) sendDelta(delta *gamepad.DeltaChanges) {
@@ -101,5 +101,6 @@ func (b *Broadcaster) sendDelta(delta *gamepad.DeltaChanges) {
 		log.Printf("Error marshaling delta message: %v", err)
 		return
 	}
-	b.hub.Broadcast(data)
+	// For delta, we need to get player index from lastState
+	b.hub.BroadcastToPlayer(data, b.lastState.PlayerIndex)
 }

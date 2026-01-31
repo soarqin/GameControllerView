@@ -5,6 +5,7 @@ import (
 	"net/http"
 
 	"github.com/gorilla/websocket"
+	"github.com/soar/GameControllerView/backend/internal/gamepad"
 	"github.com/soar/GameControllerView/backend/internal/hub"
 )
 
@@ -16,7 +17,7 @@ var upgrader = websocket.Upgrader{
 	},
 }
 
-func handleWebSocket(h *hub.Hub, b *hub.Broadcaster) http.HandlerFunc {
+func handleWebSocket(h *hub.Hub, b *hub.Broadcaster, reader *gamepad.Reader) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		conn, err := upgrader.Upgrade(w, r, nil)
 		if err != nil {
@@ -30,7 +31,9 @@ func handleWebSocket(h *hub.Hub, b *hub.Broadcaster) http.HandlerFunc {
 		// Send current state to the new client
 		b.SendInitialState(client)
 
+		// Start write pump
 		go client.WritePump()
-		go client.ReadPump()
+		// Start read pump with reader and broadcaster for handling client messages
+		go client.ReadPumpWithHandler(reader, b)
 	}
 }

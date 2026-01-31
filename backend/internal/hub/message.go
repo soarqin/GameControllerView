@@ -7,12 +7,13 @@ import (
 )
 
 type WSMessage struct {
-	Type      string                `json:"type"`
-	Seq       int64                 `json:"seq"`
-	Timestamp int64                 `json:"timestamp"`
-	Event     string                `json:"event,omitempty"`
-	Data      *gamepad.GamepadState `json:"data,omitempty"`
-	Changes   *gamepad.DeltaChanges `json:"changes,omitempty"`
+	Type        string                `json:"type"`
+	Seq         int64                 `json:"seq"`
+	Timestamp   int64                 `json:"timestamp"`
+	Event       string                `json:"event,omitempty"`
+	Data        *gamepad.GamepadState `json:"data,omitempty"`
+	Changes     *gamepad.DeltaChanges `json:"changes,omitempty"`
+	PlayerIndex int                   `json:"playerIndex,omitempty"`
 }
 
 func NewFullMessage(seq int64, state *gamepad.GamepadState) *WSMessage {
@@ -41,4 +42,19 @@ func NewEventMessage(seq int64, event string, state *gamepad.GamepadState) *WSMe
 		Event:     event,
 		Data:      state,
 	}
+}
+
+func NewPlayerSelectedMessage(playerIndex int) *WSMessage {
+	return &WSMessage{
+		Type:        "player_selected",
+		Seq:         0,
+		Timestamp:   time.Now().UnixMilli(),
+		PlayerIndex: playerIndex,
+	}
+}
+
+// ClientMessage represents a message sent from the client to the server.
+type ClientMessage struct {
+	Type        string `json:"type"`
+	PlayerIndex int    `json:"playerIndex,omitempty"`
 }

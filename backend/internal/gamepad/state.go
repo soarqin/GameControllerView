@@ -2,20 +2,24 @@ package gamepad
 
 import "math"
 
+// Vector represents a 2D coordinate.
 type Vector struct {
 	X float64 `json:"x"`
 	Y float64 `json:"y"`
 }
 
+// StickState represents the state of an analog stick (position and pressed state).
 type StickState struct {
 	Position Vector `json:"position"`
 	Pressed  bool   `json:"pressed"`
 }
 
+// TriggerState represents the state of a trigger (0.0 to 1.0).
 type TriggerState struct {
 	Value float64 `json:"value"`
 }
 
+// ButtonState represents the state of all face and shoulder buttons.
 type ButtonState struct {
 	A        bool `json:"a"`
 	B        bool `json:"b"`
@@ -30,6 +34,7 @@ type ButtonState struct {
 	Capture  bool `json:"capture"`
 }
 
+// DpadState represents the state of the directional pad.
 type DpadState struct {
 	Up    bool `json:"up"`
 	Down  bool `json:"down"`
@@ -37,16 +42,19 @@ type DpadState struct {
 	Right bool `json:"right"`
 }
 
+// SticksState represents the state of both analog sticks.
 type SticksState struct {
 	Left  StickState `json:"left"`
 	Right StickState `json:"right"`
 }
 
+// TriggersState represents the state of both triggers.
 type TriggersState struct {
 	LT TriggerState `json:"lt"`
 	RT TriggerState `json:"rt"`
 }
 
+// GamepadState represents the complete state of a connected gamepad.
 type GamepadState struct {
 	Connected      bool          `json:"connected"`
 	ControllerType string        `json:"controllerType"`
@@ -58,6 +66,8 @@ type GamepadState struct {
 	Triggers       TriggersState `json:"triggers"`
 }
 
+// DeltaChanges represents incremental changes to gamepad state for efficient updates.
+// Pointer fields indicate which values have changed (nil = unchanged).
 type DeltaChanges struct {
 	Connected      *bool          `json:"connected,omitempty"`
 	ControllerType *string        `json:"controllerType,omitempty"`
@@ -68,6 +78,7 @@ type DeltaChanges struct {
 	Triggers       *TriggersState `json:"triggers,omitempty"`
 }
 
+// IsEmpty returns true if no changes are present.
 func (d *DeltaChanges) IsEmpty() bool {
 	return d.Connected == nil &&
 		d.ControllerType == nil &&
@@ -78,12 +89,15 @@ func (d *DeltaChanges) IsEmpty() bool {
 		d.Triggers == nil
 }
 
+// analogThreshold is the minimum difference between two analog values to be considered different.
 const analogThreshold = 0.01
 
+// floatEqual returns true if two floats are approximately equal within analogThreshold.
 func floatEqual(a, b float64) bool {
 	return math.Abs(a-b) < analogThreshold
 }
 
+// ComputeDelta calculates the incremental changes between two gamepad states.
 func ComputeDelta(old, new_ GamepadState) *DeltaChanges {
 	d := &DeltaChanges{}
 

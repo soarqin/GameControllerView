@@ -6,12 +6,14 @@ import (
 	"net/http"
 	"os"
 	"os/signal"
+	"runtime"
 	"syscall"
 	"time"
 
 	"github.com/soar/GameControllerView/backend/internal/gamepad"
 	"github.com/soar/GameControllerView/backend/internal/hub"
 	"github.com/soar/GameControllerView/backend/internal/server"
+	"github.com/soar/GameControllerView/backend/internal/tray"
 )
 
 // Cross-platform signal handling: use os.Interrupt on all platforms
@@ -53,7 +55,21 @@ func main() {
 	}()
 
 	log.Println("GameControllerView started: http://localhost:8080")
-	log.Println("Press Ctrl+C to exit")
+
+	// Channel for tray-triggered shutdown
+	shutdownRequested := make(chan struct{})
+
+	// Initialize system tray on Windows only
+	if runtime.GOOS == "windows" {
+		go func() {
+			t := tray.New(func() {
+				close(shutdownRequested)
+			})
+			t.Run(tray.GetIcon())
+		}()
+	} else {
+		log.Println("Press Ctrl+C to exit")
+	}
 
 	// Run reader in goroutine (but SDL main thread handling is inside)
 	// Note: reader.Run() must be called from a goroutine with LockOSThread
@@ -63,10 +79,13 @@ func main() {
 		close(readerDone)
 	}()
 
-	// Wait for shutdown signal or server error
+	// Wait for shutdown signal, tray request, or server error
 	select {
 	case <-sigCh:
 		log.Println("Shutting down...")
+		cancel()
+	case <-shutdownRequested:
+		log.Println("Shutdown requested from tray")
 		cancel()
 	case err := <-serverErrCh:
 		log.Printf("HTTP server error: %v", err)

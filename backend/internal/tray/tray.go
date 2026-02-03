@@ -48,14 +48,15 @@ func (t *Tray) onReady(iconData []byte) {
 	t.menuExit = systray.AddMenuItem("Exit", "Quit application")
 
 	go func() {
-		for range t.menuOpen.ClickedCh {
-			t.openBrowser()
-		}
-	}()
-
-	go func() {
-		for range t.menuExit.ClickedCh {
-			t.once.Do(t.shutdownFunc)
+		for {
+			select {
+			case <-t.menuOpen.ClickedCh:
+				t.openBrowser()
+			case <-t.menuExit.ClickedCh:
+				t.once.Do(t.shutdownFunc)
+				systray.Quit()
+				return
+			}
 		}
 	}()
 

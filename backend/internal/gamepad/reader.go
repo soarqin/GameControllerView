@@ -35,6 +35,7 @@ type Reader struct {
 	joystickOrder []sdl.JoystickID // maintain connection order
 	changes       chan GamepadState
 	mu            sync.RWMutex
+	onSDLInit     func() // Optional callback called after SDL initialization
 }
 
 func NewReader() *Reader {
@@ -77,14 +78,9 @@ func (r *Reader) SetActiveByPlayerIndex(playerIndex int) bool {
 	if playerIndex < 1 || playerIndex > len(r.joystickOrder) {
 		return false
 	}
-
 	newID := r.joystickOrder[playerIndex-1]
-	if newID == r.activeID {
-		return true // Already active
-	}
-
-	info, exists := r.joysticks[newID]
-	if !exists || !sdl.JoystickConnected(info.joystick) {
+	info := r.joysticks[newID]
+	if info == nil {
 		return false
 	}
 
@@ -105,6 +101,14 @@ func (r *Reader) SetActiveByPlayerIndex(playerIndex int) bool {
 	return true
 }
 
+// SetOnSDLInitCallback sets a callback function that will be called after SDL initialization.
+// This is useful for platform-specific setup that needs to happen after SDL is initialized.
+func (r *Reader) SetOnSDLInitCallback(callback func()) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	r.onSDLInit = callback
+}
+
 // Run initializes SDL and runs the main event+polling loop on the current thread.
 // Must be called from the main goroutine with runtime.LockOSThread().
 func (r *Reader) Run(ctx context.Context) {
@@ -117,6 +121,14 @@ func (r *Reader) Run(ctx context.Context) {
 	defer sdl.Quit()
 
 	log.Println("SDL3 Joystick subsystem initialized")
+
+	// Call SDL init callback if set (e.g., to re-register Windows console handler)
+	r.mu.Lock()
+	callback := r.onSDLInit
+	r.mu.Unlock()
+	if callback != nil {
+		callback()
+	}
 
 	// Check for already-connected joysticks
 	ids := sdl.GetJoysticks()

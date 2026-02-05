@@ -35,20 +35,24 @@ http://localhost:8080/?p=2
 
 ```
 backend/
-├── main.go                             # Entry: component assembly, signal handling (Ctrl+C)
+├── main.go                             # Entry: component assembly, signal handling
 ├── embed.go                            # go:embed embeds frontend/ static files
 ├── internal/
+│   ├── console/
+│   │   └── console.go                  # Cross-platform console detection & Windows Ctrl+C handler (reusable)
 │   ├── gamepad/
 │   │   ├── state.go                    # GamepadState data model (includes PlayerIndex)
 │   │   ├── mapping.go                  # Device mapping table (raw axis/button index → semantic names)
-│   │   └── reader.go                   # SDL3 Joystick reader, supports multi-gamepad switching
+│   │   └── reader.go                   # SDL3 Joystick reader, supports multi-gamepad switching, SDL init callback
 │   ├── hub/
 │   │   ├── hub.go                      # WebSocket client management, targeted broadcast
 │   │   ├── broadcast.go                # State change → targeted JSON broadcast
 │   │   └── message.go                  # WSMessage type definitions
-│   └── server/
-│       ├── server.go                   # HTTP server, graceful shutdown
-│       └── handler.go                  # WebSocket upgrade, client message handling
+│   ├── server/
+│   │   ├── server.go                   # HTTP server, graceful shutdown
+│   │   └── handler.go                  # WebSocket upgrade, client message handling
+│   └── tray/
+│       └── tray.go                     # Windows system tray integration
 └── frontend/                           # Frontend static files (embedded via go:embed)
     ├── index.html
     ├── styles.css
@@ -67,7 +71,7 @@ backend/
 SDL3 must run on the OS main thread. In `main.go`, `reader.Run(ctx)` executes the SDL event loop in a separate goroutine (internally calls `runtime.LockOSThread`), while the main thread waits for signals.
 
 ```
-goroutine: Reader.Run(ctx)     ← SDL Init → PollEvent + Poll Joystick (~60Hz)
+goroutine: Reader.Run(ctx)     ← SDL Init → Callback (re-register Windows handler) → PollEvent + Poll Joystick (~60Hz)
                                    ↓
                             chan GamepadState
                                    ↓
@@ -77,12 +81,61 @@ goroutine: Hub.Run()           ← Manage WebSocket client connections
 goroutine: HTTP Server         ← Static files + WebSocket endpoint, graceful shutdown
 ```
 
+**SDL Initialization Callback**: On Windows, a callback is invoked after SDL initialization to re-register the console control handler (SDL3 overrides it during init). Use `reader.SetOnSDLInitCallback(func())` to set platform-specific post-init behavior.
+
 ### Signal Handling
 
 - Captures `os.Interrupt` (Ctrl+C) and `syscall.SIGTERM`
+- **Windows**: Uses `SetConsoleCtrlHandler` API via `console.SetupConsoleHandler()` because SDL3 with `LockOSThread()` interferes with Go's standard signal handling
+  - Handler is re-registered after SDL initialization (SDL3 overrides console handlers during init)
+  - Supports both Ctrl+C and Ctrl+Break
+  - Uses atomic operations to prevent panic from rapid key presses
+- **Unix/Linux**: Uses Go's standard `os.Interrupt` signal handling
+- **Console Detection**: `console.IsRunningFromConsole()` intelligently handles console allocation
+  - **Console-mode build + terminal**: Reuses existing console
+  - **Console-mode build + double-click**: Frees auto-created console (GUI mode)
+  - **GUI-mode build + terminal**: Creates independent console window + redirects stdout/stderr/stdin
+  - **GUI-mode build + double-click**: No console (pure GUI mode)
+  - Console mode shows "Press Ctrl+C or Ctrl+Break to exit" message
+  - GUI mode hides console window, uses system tray for exit
 - Cancels context to stop reader
 - Waits for reader to complete cleanup
 - Gracefully shuts down HTTP server (5 second timeout)
+
+### Console Package (Reusable Component)
+
+The `internal/console` package provides cross-platform console detection and Windows Ctrl+C handling that can be reused in other projects:
+
+```go
+import "github.com/soar/GameControllerView/backend/internal/console"
+
+// Detect if running from console or GUI mode
+if console.IsRunningFromConsole() {
+    // Console mode
+} else {
+    // GUI mode
+}
+
+// Set up Windows console handler (works with SDL3, LockOSThread, etc.)
+shutdownChan := make(chan struct{})
+registerHandler := console.SetupConsoleHandler(shutdownChan)
+
+// Re-register after library initialization (e.g., SDL init)
+registerHandler()
+
+// Wait for shutdown
+<-shutdownChan
+```
+
+**Key Features:**
+- Platform-independent: On non-Windows platforms, `SetupConsoleHandler` returns a no-op function
+- Smart console allocation: Handles both console-mode and GUI-mode builds correctly
+  - Console-mode builds: Frees auto-created console when double-clicked
+  - GUI-mode builds: Creates independent console window when launched from terminal (prevents input/output confusion)
+- Automatically detects launch method (terminal vs double-click) via parent process check
+- Std stream redirection: After console allocation, updates `os.Stdout`, `os.Stderr`, `os.Stdin`, and `log` output
+- Re-registration support for libraries that override console handlers during initialization
+- Safe for rapid Ctrl+C presses (atomic operations prevent duplicate channel close)
 
 ### Multi-Gamepad Support
 
@@ -168,6 +221,72 @@ All drawing logic is in `frontend/app.js` in `drawController()` and its sub-func
 ### Modifying Deadzone
 
 `deadzone` constant in `reader.go` (currently 0.05), `analogThreshold` constant in `state.go` (currently 0.01, used for delta comparison).
+
+### Using SDL Initialization Callback (Platform-Specific Setup)
+
+The `Reader` supports an optional callback that is invoked after SDL initialization completes. This is useful for platform-specific setup that must happen after SDL is initialized (e.g., re-registering Windows console handlers).
+
+```go
+reader := gamepad.NewReader()
+reader.SetOnSDLInitCallback(func() {
+    // Platform-specific setup after SDL initialization
+    // Only called if runtime.GOOS matches the platform check
+})
+```
+
+### Using Console Package in Other Projects
+
+The `internal/console` package is designed to be reusable across projects. To use it in your own project:
+
+1. Copy the `internal/console` directory to your project
+2. Import and use the functions:
+
+```go
+import "yourproject/internal/console"
+
+func main() {
+    // Detect console mode
+    if console.IsRunningFromConsole() {
+        fmt.Println("Running from terminal - press Ctrl+C to exit")
+    } else {
+        // GUI mode - hide console, show tray icon, etc.
+    }
+
+    // Set up Windows console handler (important for SDL3, LockOSThread, etc.)
+    shutdownChan := make(chan struct{})
+    registerHandler := console.SetupConsoleHandler(shutdownChan)
+
+    // If using libraries that override console handlers, re-register after init
+    // e.g., after sdl.Init()
+    registerHandler()
+
+    // Wait for shutdown
+    <-shutdownChan
+    cleanup()
+}
+```
+
+**Why use this package:**
+- Fixes Ctrl+C not working with SDL3, OpenGL, or other libraries using `runtime.LockOSThread()`
+- Smart console allocation handles both console-mode and GUI-mode builds:
+  - Console-mode builds: Frees auto-created console when double-clicked
+  - GUI-mode builds: Allocates console when launched from terminal
+- Automatically detects launch method (terminal vs double-click) via parent process check
+- Cross-platform: gracefully degrades to no-op on non-Windows platforms
+- Production-tested: handles edge cases like rapid Ctrl+C presses
+
+**Build Mode Examples:**
+```bash
+# Console-mode build (default)
+go build -o myapp.exe
+# - From terminal: shows console output
+# - Double-clicked: hides console window (GUI mode)
+
+# GUI-mode build (no console window by default)
+go build -ldflags "-H windowsgui" -o myapp.exe
+# - From terminal: creates new console window + redirects stdout/stderr/stdin
+# - Double-clicked: no console (pure GUI)
+```
 
 ## Dependencies
 

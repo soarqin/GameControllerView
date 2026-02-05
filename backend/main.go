@@ -10,16 +10,20 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/soar/GameControllerView/backend/internal/console"
 	"github.com/soar/GameControllerView/backend/internal/gamepad"
 	"github.com/soar/GameControllerView/backend/internal/hub"
 	"github.com/soar/GameControllerView/backend/internal/server"
 	"github.com/soar/GameControllerView/backend/internal/tray"
 )
 
-// Cross-platform signal handling: use os.Interrupt on all platforms
-// On Windows: os.Interrupt is sent when Ctrl+C is pressed
-// On Unix: os.Interrupt is equivalent to syscall.SIGINT
-var shutdownSignals = []os.Signal{os.Interrupt, syscall.SIGTERM}
+// buildShutdownSignals constructs the signal list based on the platform.
+// On Windows, os.Interrupt handles both Ctrl+C and Ctrl+Break.
+func buildShutdownSignals() []os.Signal {
+	return []os.Signal{os.Interrupt, syscall.SIGTERM}
+}
+
+var shutdownSignals = buildShutdownSignals()
 
 func main() {
 	// Create cancellable context
@@ -33,8 +37,21 @@ func main() {
 	sigCh := make(chan os.Signal, 1)
 	signal.Notify(sigCh, shutdownSignals...)
 
+	// Windows-specific: Set up console control handler for reliable Ctrl+C handling
+	// This is needed because SDL3 with LockOSThread() may interfere with Go's signal handling
+	windowsCtrlCh := make(chan struct{}, 1)
+	registerWindowsHandler := console.SetupConsoleHandler(windowsCtrlCh)
+
 	// Create gamepad reader
 	reader := gamepad.NewReader()
+
+	// On Windows, set up a callback to re-register the console handler after SDL initialization
+	// This is needed because SDL3 may override or disable our console handler during initialization
+	if runtime.GOOS == "windows" {
+		reader.SetOnSDLInitCallback(func() {
+			registerWindowsHandler()
+		})
+	}
 
 	// Create and start hub
 	h := hub.NewHub()
@@ -59,8 +76,11 @@ func main() {
 	// Channel for tray-triggered shutdown
 	shutdownRequested := make(chan struct{})
 
-	// Initialize system tray on Windows only
-	if runtime.GOOS == "windows" {
+	// Determine startup mode based on whether we have a console
+	consoleMode := console.IsRunningFromConsole()
+
+	// Initialize system tray only in GUI mode (no console attached)
+	if runtime.GOOS == "windows" && !consoleMode {
 		go func() {
 			t := tray.New(func() {
 				close(shutdownRequested)
@@ -68,7 +88,12 @@ func main() {
 			t.Run(tray.GetIcon())
 		}()
 	} else {
-		log.Println("Press Ctrl+C to exit")
+		// Console mode: show exit instructions
+		if runtime.GOOS == "windows" {
+			log.Println("Running in console mode. Press Ctrl+C or Ctrl+Break to exit.")
+		} else {
+			log.Println("Press Ctrl+C to exit")
+		}
 	}
 
 	// Run reader in goroutine (but SDL main thread handling is inside)
@@ -79,7 +104,7 @@ func main() {
 		close(readerDone)
 	}()
 
-	// Wait for shutdown signal, tray request, or server error
+	// Wait for shutdown signal, tray request, server error, or Windows Ctrl+C
 	select {
 	case <-sigCh:
 		log.Println("Shutting down...")
@@ -89,6 +114,9 @@ func main() {
 		cancel()
 	case err := <-serverErrCh:
 		log.Printf("HTTP server error: %v", err)
+		cancel()
+	case <-windowsCtrlCh:
+		log.Println("Ctrl+C detected via Windows console handler")
 		cancel()
 	}
 

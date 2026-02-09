@@ -368,10 +368,42 @@ function drawBody(cfg) {
 
     // Check for SVG path property (new feature)
     if (body.path) {
+        ctx.save();
+
+        // If viewBox is provided, scale the SVG path to fit the body dimensions
+        if (body.viewBox) {
+            // Parse viewBox: "min-x min-y width height"
+            const [vbX, vbY, vbWidth, vbHeight] = body.viewBox.split(/[\s,]+/).map(Number);
+
+            // Calculate target position and size from body config
+            const targetX = body.x || 0;
+            const targetY = body.y || 0;
+            const targetWidth = body.width || 500;
+            const targetHeight = body.height || 330;
+
+            // Calculate scale to fit viewBox into target area
+            // Use uniform scaling to preserve aspect ratio
+            const scaleX = targetWidth / vbWidth;
+            const scaleY = targetHeight / vbHeight;
+            const scale = Math.min(scaleX, scaleY);
+
+            // Calculate centered position
+            const scaledWidth = vbWidth * scale;
+            const scaledHeight = vbHeight * scale;
+            const offsetX = targetX + (targetWidth - scaledWidth) / 2 - vbX * scale;
+            const offsetY = targetY + (targetHeight - scaledHeight) / 2 - vbY * scale;
+
+            // Apply transformation: translate to position, then scale
+            ctx.translate(offsetX, offsetY);
+            ctx.scale(scale, scale);
+        }
+
         // Use Path2D API to draw custom controller outline
         const path = new Path2D(body.path);
         ctx.fill(path);
         ctx.stroke(path);
+
+        ctx.restore();
         return;
     }
 

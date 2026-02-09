@@ -5,6 +5,10 @@ Go backend reads gamepad input via SDL3, pushes to frontend via WebSocket, and r
 ## Language Conventions
 - Documentation uses markdown format
 - All comments are in English
+- **Update CLAUDE.md**: After completing any task, update CLAUDE.md to reflect the changes
+  - Document new features, bug fixes, or architectural changes
+  - Update relevant sections in this file
+  - Keep documentation in sync with code implementation
 
 ## Build and Run
 
@@ -195,6 +199,46 @@ Intentionally uses SDL3 Joystick low-level API instead of Gamepad high-level API
 ### Frontend Configuration System
 
 `frontend/configs/*.json` defines Canvas drawing layout for each gamepad type (button coordinates, sizes, radii). Frontend automatically loads the corresponding config based on `controllerType` reported by backend.
+
+#### Body Shape Configuration
+
+Gamepad body outlines are defined in the `body` section of each config file. The system supports two rendering methods:
+
+**1. SVG Path (Recommended)** - Realistic controller outlines
+Add a `path` property with SVG path data:
+```json
+{
+  "body": {
+    "path": "M 30 40 L 470 40 Q 490 40 490 60..."
+  }
+}
+```
+
+**2. Rounded Rectangle (Legacy)** - Simple shapes
+Uses `x`, `y`, `width`, `height`, `radius` for basic rounded rectangles:
+```json
+{
+  "body": {
+    "x": 10, "y": 40, "width": 480, "height": 280, "radius": 40
+  }
+}
+```
+
+**SVG Path Guidelines:**
+- Canvas size: 500x330 pixels
+- Origin: top-left corner (0,0)
+- Use standard SVG path commands: M (move), L (line), Q (quadratic curve), C (cubic curve), Z (close)
+- Keep paths simple (outline only, no textures or gradients)
+- Ensure path is closed (ends with Z)
+- Maintain roughly 480x280 bounding box for consistency across controllers
+- Test paths by temporarily adding to config and refreshing browser
+
+**Common Path Command Reference:**
+- `M x y` - Move to starting point
+- `L x y` - Line to point
+- `Q cx cy x y` - Quadratic Bézier curve to (x,y) with control point (cx,cy)
+- `C cx1 cy1 cx2 cy2 x y` - Cubic Bézier curve (two control points)
+- `Z` - Close path
 
 ## Common Modification Guide
 

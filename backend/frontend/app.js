@@ -366,7 +366,16 @@ function drawBody(cfg) {
     ctx.strokeStyle = COLORS.outline;
     ctx.lineWidth = 2;
 
-    // Draw a rounded controller shape
+    // Check for SVG path property (new feature)
+    if (body.path) {
+        // Use Path2D API to draw custom controller outline
+        const path = new Path2D(body.path);
+        ctx.fill(path);
+        ctx.stroke(path);
+        return;
+    }
+
+    // Fallback: Draw rounded rectangle (backward compatibility)
     const x = body.x, y = body.y, w = body.width, h = body.height, r = body.radius || 30;
 
     ctx.beginPath();

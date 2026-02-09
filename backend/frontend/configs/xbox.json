@@ -2,7 +2,7 @@
     "name": "Xbox Controller",
     "body": {
         "path": "M60.3 48.3c-6.8 1.9-15.4 6-19.8 9.6-5.4 4.2-12.7 17.8-17.6 32.6C18 105.2 12.4 131 10.6 146.9c-1 8.7-.8 28 .4 38 1.5 12.4 3.3 17.1 8.1 20.7 2.7 2.1 5.2 2.8 10.1 2.7 4.8 0 9.6-1.5 15.7-4.7 8.1-4.4 12.3-7.6 23.7-18.1 3.8-3.5 8.3-7.3 10-8.5 8-5.4 24-7.9 49.4-7.9s41.4 2.6 49.4 7.9c1.7 1.2 6.2 5 10 8.5 11.3 10.5 15.6 13.7 23.7 18.1 6.1 3.3 10.8 4.7 15.7 4.7 4.8.1 7.4-.6 10.1-2.7 4.4-3.3 6.5-8.2 7.7-17.9 3.2-24.6 1.8-43.8-5.2-73.9-4.8-20.8-7.9-29.9-13.8-41.4-5.8-11.4-8.7-14.5-17.3-18.9-7.1-3.7-12.3-5.3-17.4-5.6-6.8-.4-12.2 1.3-21.6 6.7-10.5 6.1-16.2 7.1-41.2 7.1-24.5 0-30.9-1-40.3-6.6-5.2-3.1-8.3-4.6-12.5-6C71.3 47.7 63.8 47.4 60.3 48.3z",
-        "viewBox": "0 0 500 330",
+        "viewBox": "8 46 240 164",
         "x": 10,
         "y": 40,
         "width": 480,
@@ -11,35 +11,35 @@
     },
     "faceButtons": {
         "radius": 18,
-        "a": { "x": 410, "y": 200, "label": { "text": "A", "color": "#4CAF50" } },
-        "b": { "x": 445, "y": 165, "label": { "text": "B", "color": "#F44336" } },
-        "x": { "x": 375, "y": 165, "label": { "text": "X", "color": "#2196F3" } },
-        "y": { "x": 410, "y": 130, "label": { "text": "Y", "color": "#FFC107" } },
+        "a": { "x": 380, "y": 177, "label": { "text": "A", "color": "#4CAF50" } },
+        "b": { "x": 412, "y": 145, "label": { "text": "B", "color": "#F44336" } },
+        "x": { "x": 348, "y": 145, "label": { "text": "X", "color": "#2196F3" } },
+        "y": { "x": 380, "y": 113, "label": { "text": "Y", "color": "#FFC107" } },
         "label": { "fontSize": 18, "fontWeight": "bold" }
     },
     "dpad": {
         "x": 190,
-        "y": 245,
-        "size": 40,
-        "armWidth": 30
+        "y": 210,
+        "size": 30,
+        "armWidth": 20
     },
     "shoulders": {
-        "lb": { "x": 45, "y": 45, "width": 80, "height": 30, "radius": 8, "label": { "text": "LB" } },
-        "rb": { "x": 375, "y": 45, "width": 80, "height": 30, "radius": 8, "label": { "text": "RB" } },
+        "lb": { "x": 95, "y": 40, "width": 80, "height": 28, "radius": 8, "label": { "text": "LB" } },
+        "rb": { "x": 325, "y": 40, "width": 80, "height": 28, "radius": 8, "label": { "text": "RB" } },
         "label": { "fontSize": 15, "fontWeight": "bold" }
     },
     "triggers": {
-        "lt": { "x": 60, "y": 15, "width": 55, "height": 45, "radius": 8, "label": { "text": "LT" } },
-        "rt": { "x": 385, "y": 15, "width": 55, "height": 45, "radius": 8, "label": { "text": "RT" } },
+        "lt": { "x": 105, "y": 20, "width": 55, "height": 35, "radius": 8, "label": { "text": "LT" } },
+        "rt": { "x": 340, "y": 20, "width": 55, "height": 35, "radius": 8, "label": { "text": "RT" } },
         "label": { "fontSize": 13, "fontWeight": "bold" }
     },
     "sticks": {
-        "left": { "x": 90, "y": 165, "baseRadius": 38, "knobRadius": 20 },
-        "right": { "x": 310, "y": 245, "baseRadius": 38, "knobRadius": 20 }
+        "left": { "x": 120, "y": 145, "baseRadius": 32, "knobRadius": 18 },
+        "right": { "x": 310, "y": 210, "baseRadius": 32, "knobRadius": 18 }
     },
     "centerButtons": {
-        "back": { "x": 185, "y": 145, "width": 50, "height": 22, "radius": 5, "label": { "text": "BACK", "fontSize": 9, "fontWeight": "bold" } },
-        "start": { "x": 265, "y": 145, "width": 50, "height": 22, "radius": 5, "label": { "text": "START", "fontSize": 9, "fontWeight": "bold" } },
-        "guide": { "x": 250, "y": 85, "radius": 20 }
+        "back": { "x": 185, "y": 135, "width": 50, "height": 20, "radius": 5, "label": { "text": "BACK", "fontSize": 9, "fontWeight": "bold" } },
+        "start": { "x": 265, "y": 135, "width": 50, "height": 20, "radius": 5, "label": { "text": "MENU", "fontSize": 9, "fontWeight": "bold" } },
+        "guide": { "x": 250, "y": 95, "radius": 20 }
     }
 }

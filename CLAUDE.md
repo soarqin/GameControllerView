@@ -214,6 +214,22 @@ Add a `path` property with SVG path data:
 }
 ```
 
+**With viewBox (Recommended for imported SVG paths)**
+When importing paths from actual SVG files, add `viewBox` to define the coordinate system:
+```json
+{
+  "body": {
+    "path": "M60.3 48.3c-6.8 1.9...",
+    "viewBox": "0 0 256 256",
+    "x": 10,
+    "y": 40,
+    "width": 480,
+    "height": 280
+  }
+}
+```
+The `viewBox` property ("min-x min-y width height") defines the SVG coordinate system. The renderer will automatically scale and center the path to fit within the body's `x`, `y`, `width`, `height` boundaries while preserving aspect ratio.
+
 **2. Rounded Rectangle (Legacy)** - Simple shapes
 Uses `x`, `y`, `width`, `height`, `radius` for basic rounded rectangles:
 ```json
@@ -230,7 +246,8 @@ Uses `x`, `y`, `width`, `height`, `radius` for basic rounded rectangles:
 - Use standard SVG path commands: M (move), L (line), Q (quadratic curve), C (cubic curve), Z (close)
 - Keep paths simple (outline only, no textures or gradients)
 - Ensure path is closed (ends with Z)
-- Maintain roughly 480x280 bounding box for consistency across controllers
+- When importing from SVG files, always include the original viewBox
+- Use `viewBox` for automatic scaling - simpler than manually converting coordinates
 - Test paths by temporarily adding to config and refreshing browser
 
 **Common Path Command Reference:**
@@ -239,6 +256,14 @@ Uses `x`, `y`, `width`, `height`, `radius` for basic rounded rectangles:
 - `Q cx cy x y` - Quadratic Bézier curve to (x,y) with control point (cx,cy)
 - `C cx1 cy1 cx2 cy2 x y` - Cubic Bézier curve (two control points)
 - `Z` - Close path
+
+**Importing SVG Files:**
+To import a controller shape from an existing SVG file:
+1. Open the SVG file and locate the `<path>` element
+2. Copy the `d` attribute value to the `path` property
+3. Copy the root SVG's `viewBox` attribute to the `viewBox` property
+4. Set `x`, `y`, `width`, `height` to position and scale on the canvas
+5. The renderer will handle coordinate transformation automatically
 
 ## Common Modification Guide
 

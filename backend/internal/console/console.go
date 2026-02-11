@@ -109,7 +109,7 @@ func hasConsoleWindow() bool {
 // attachToParentConsole allocates a new console and redirects std streams.
 // This is used for GUI-mode builds that are launched from a terminal.
 // Note: We use AllocConsole() instead of AttachConsole() because:
-// - AttachConsole() causes input混乱 since both parent and child share the console
+// - AttachConsole() causes input confusion since both parent and child share the console
 // - AllocConsole() creates a separate console window with its own input/output
 func attachToParentConsole() {
 	// Allocate a new console window (independent from parent terminal)

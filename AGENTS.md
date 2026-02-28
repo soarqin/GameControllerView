@@ -5,7 +5,7 @@ Go backend reads gamepad input via SDL3, pushes to frontend via WebSocket, and r
 ## Language Conventions
 - Documentation uses markdown format
 - All comments are in English
-- **Update CLAUDE.md**: After completing any task, update CLAUDE.md to reflect the changes
+- **Update AGENTS.md**: After completing any task, update AGENTS.md to reflect the changes
   - Document new features, bug fixes, or architectural changes
   - Update relevant sections in this file
   - Keep documentation in sync with code implementation
@@ -56,7 +56,8 @@ backend/
 │   │   ├── server.go                   # HTTP server, graceful shutdown
 │   │   └── handler.go                  # WebSocket upgrade, client message handling
 │   └── tray/
-│       └── tray.go                     # Windows system tray integration
+│       ├── tray.go                     # Windows system tray integration (atomic shutdown flag, non-blocking menu handling)
+│       └── icon.go                     # Embedded tray icon
 └── frontend/                           # Frontend static files (embedded via go:embed)
     ├── index.html
     ├── styles.css
@@ -356,6 +357,22 @@ go build -ldflags "-H windowsgui" -o myapp.exe
 # - From terminal: creates new console window + redirects stdout/stderr/stdin
 # - Double-clicked: no console (pure GUI)
 ```
+
+### System Tray (Windows GUI Mode)
+
+The system tray provides menu access when running in GUI mode (double-clicked executable).
+
+**Key Features:**
+- **Non-blocking menu handling**: Menu clicks are processed in a dedicated goroutine to prevent Windows message loop deadlocks
+- **Atomic shutdown flag**: Prevents duplicate shutdown requests and race conditions
+- **Click deduplication**: Uses `atomic.Bool` to prevent multiple rapid clicks from causing issues
+- **Graceful exit**: Ensures shutdown function completes before quitting systray
+
+**Why tray can freeze:**
+The `fyne.io/systray` library uses Windows message loops internally. If menu click handlers block or take too long, the Windows message queue can fill up, causing the tray to become unresponsive. The fix:
+1. Move all event handling to a separate goroutine
+2. Use atomic operations for state management
+3. Avoid blocking operations in click handlers
 
 ## Dependencies
 

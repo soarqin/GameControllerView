@@ -5,6 +5,7 @@ import (
 	"os/exec"
 	"runtime"
 	"sync"
+	"sync/atomic"
 
 	"fyne.io/systray"
 )
@@ -16,6 +17,7 @@ type ShutdownFunc func()
 type Tray struct {
 	shutdownFunc ShutdownFunc
 	once         sync.Once
+	shuttingDown atomic.Bool
 	menuOpen     *systray.MenuItem
 	menuExit     *systray.MenuItem
 }
@@ -47,29 +49,44 @@ func (t *Tray) onReady(iconData []byte) {
 	t.menuOpen = systray.AddMenuItem("Open Browser", "Open web interface")
 	t.menuExit = systray.AddMenuItem("Exit", "Quit application")
 
-	go func() {
-		for {
-			select {
-			case <-t.menuOpen.ClickedCh:
-				t.openBrowser()
-			case <-t.menuExit.ClickedCh:
-				t.once.Do(t.shutdownFunc)
-				systray.Quit()
-				return
-			}
-		}
-	}()
+	// Handle menu clicks in separate goroutines to prevent blocking
+	go t.handleMenuClicks()
 
 	log.Println("System tray initialized")
 }
 
+// handleMenuClicks processes menu item clicks without blocking
+func (t *Tray) handleMenuClicks() {
+	for {
+		select {
+		case <-t.menuOpen.ClickedCh:
+			if !t.shuttingDown.Load() {
+				t.openBrowser()
+			}
+		case <-t.menuExit.ClickedCh:
+			if t.shuttingDown.CompareAndSwap(false, true) {
+				t.once.Do(t.shutdownFunc)
+				// Small delay to ensure shutdown function completes
+				systray.Quit()
+				return
+			}
+		}
+	}
+}
+
 // onExit is called when the tray is exiting
 func (t *Tray) onExit() {
+	t.shuttingDown.Store(true)
 	log.Println("System tray exiting")
 }
 
 // openBrowser opens the default web browser
 func (t *Tray) openBrowser() {
+	// Prevent multiple browser launches during shutdown
+	if t.shuttingDown.Load() {
+		return
+	}
+
 	url := "http://localhost:8080"
 	var cmd *exec.Cmd
 

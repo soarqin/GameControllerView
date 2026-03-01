@@ -10,12 +10,12 @@ import (
 )
 
 const (
-	deadzone     = 0.05
-	pollDelayNS  = 16_000_000 // ~60Hz
-	hatUp    uint8 = 0x01
-	hatRight uint8 = 0x02
-	hatDown  uint8 = 0x04
-	hatLeft  uint8 = 0x08
+	deadzone          = 0.05
+	pollDelayNS       = 16_000_000 // ~60Hz
+	hatUp       uint8 = 0x01
+	hatRight    uint8 = 0x02
+	hatDown     uint8 = 0x04
+	hatLeft     uint8 = 0x08
 )
 
 type joystickInfo struct {
@@ -50,13 +50,6 @@ func (r *Reader) Changes() <-chan GamepadState {
 	return r.changes
 }
 
-// CurrentState returns a snapshot of the current gamepad state.
-func (r *Reader) CurrentState() GamepadState {
-	r.mu.RLock()
-	defer r.mu.RUnlock()
-	return r.state
-}
-
 // GetPlayerIndex returns the 1-based player index of the currently active joystick.
 func (r *Reader) GetPlayerIndex() int {
 	r.mu.RLock()
@@ -73,14 +66,14 @@ func (r *Reader) GetPlayerIndex() int {
 // Returns true if successful, false if index is out of range.
 func (r *Reader) SetActiveByPlayerIndex(playerIndex int) bool {
 	r.mu.Lock()
-	defer r.mu.Unlock()
-
 	if playerIndex < 1 || playerIndex > len(r.joystickOrder) {
+		r.mu.Unlock()
 		return false
 	}
 	newID := r.joystickOrder[playerIndex-1]
 	info := r.joysticks[newID]
 	if info == nil {
+		r.mu.Unlock()
 		return false
 	}
 
@@ -90,14 +83,10 @@ func (r *Reader) SetActiveByPlayerIndex(playerIndex int) bool {
 	r.state.Name = info.name
 	r.state.ControllerType = info.mapping.Name
 	r.state.PlayerIndex = playerIndex
+	r.mu.Unlock()
 
 	log.Printf("Active joystick switched to player %d: %s (ID=%d)", playerIndex, info.name, newID)
-
-	// Emit new state to notify clients
-	r.mu.Unlock() // Unlock before calling emitState which needs RLock
 	r.emitState()
-	r.mu.Lock() // Relock for defer
-
 	return true
 }
 
@@ -148,12 +137,6 @@ func (r *Reader) Run(ctx context.Context) {
 		r.pollState()
 		sdl.DelayNS(pollDelayNS)
 	}
-}
-
-// Close cleans up all opened joysticks. Safe to call from any goroutine
-// after Run has returned.
-func (r *Reader) Close() {
-	// Joysticks are closed in Run's cleanup via closeAll
 }
 
 func (r *Reader) processEvents() {
@@ -329,8 +312,8 @@ func (r *Reader) pollState() {
 	for _, am := range mapping.Axes {
 		raw := sdl.GetJoystickAxis(js, am.Index)
 		if am.IsTrigger {
-			val := NormalizeTrigger(raw, am.RawMin, am.RawMax)
-			val = ApplyDeadzone(val, deadzone)
+			val := normalizeTrigger(raw, am.RawMin, am.RawMax)
+			val = applyDeadzone(val, deadzone)
 			switch am.Target {
 			case "lt":
 				state.Triggers.LT.Value = val
@@ -338,11 +321,11 @@ func (r *Reader) pollState() {
 				state.Triggers.RT.Value = val
 			}
 		} else {
-			val := NormalizeAxis(raw)
+			val := normalizeAxis(raw)
 			if am.Invert {
 				val = -val
 			}
-			val = ApplyDeadzone(val, deadzone)
+			val = applyDeadzone(val, deadzone)
 			switch am.Target {
 			case "left_x":
 				state.Sticks.Left.Position.X = val

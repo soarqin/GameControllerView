@@ -1,25 +1,13 @@
 package hub
 
 import (
-	"encoding/json"
 	"log"
 	"sync"
-
-	"github.com/gorilla/websocket"
 )
-
-// Client represents a connected WebSocket client.
-type Client struct {
-	hub         *Hub
-	conn        *websocket.Conn
-	send        chan []byte
-	playerIndex int // 1-based player index this client is listening to
-}
 
 // Hub manages WebSocket clients and broadcasts messages.
 type Hub struct {
 	clients    map[*Client]bool
-	broadcast  chan []byte
 	register   chan *Client
 	unregister chan *Client
 	mu         sync.RWMutex
@@ -28,7 +16,6 @@ type Hub struct {
 func NewHub() *Hub {
 	return &Hub{
 		clients:    make(map[*Client]bool),
-		broadcast:  make(chan []byte, 256),
 		register:   make(chan *Client),
 		unregister: make(chan *Client),
 	}
@@ -42,11 +29,6 @@ func (h *Hub) Register(c *Client) {
 // Unregister removes a client from the hub.
 func (h *Hub) Unregister(c *Client) {
 	h.unregister <- c
-}
-
-// Broadcast sends a message to the broadcast channel.
-func (h *Hub) Broadcast(msg []byte) {
-	h.broadcast <- msg
 }
 
 // BroadcastToPlayer sends a message to all clients with matching player index.
@@ -86,105 +68,6 @@ func (h *Hub) Run() {
 			}
 			h.mu.Unlock()
 			log.Printf("Client disconnected (total: %d)", len(h.clients))
-
-		case msg := <-h.broadcast:
-			h.mu.RLock()
-			for client := range h.clients {
-				select {
-				case client.send <- msg:
-				default:
-					// Client send buffer full, disconnect
-					go func(c *Client) {
-						h.unregister <- c
-					}(client)
-				}
-			}
-			h.mu.RUnlock()
-		}
-	}
-}
-
-// NewClient creates a new Client attached to the hub.
-func NewClient(hub *Hub, conn *websocket.Conn) *Client {
-	return &Client{
-		hub:         hub,
-		conn:        conn,
-		send:        make(chan []byte, 256),
-		playerIndex: 1, // Default to player 1
-	}
-}
-
-// SetPlayerIndex sets the player index for this client.
-func (c *Client) SetPlayerIndex(index int) {
-	c.playerIndex = index
-}
-
-// WritePump sends messages from the send channel to the WebSocket connection.
-func (c *Client) WritePump() {
-	defer func() {
-		c.conn.Close()
-	}()
-
-	for msg := range c.send {
-		err := c.conn.WriteMessage(websocket.TextMessage, msg)
-		if err != nil {
-			break
-		}
-	}
-}
-
-// ReadPump reads messages from the WebSocket and handles disconnection.
-func (c *Client) ReadPump() {
-	defer func() {
-		c.hub.Unregister(c)
-		c.conn.Close()
-	}()
-
-	// We don't expect messages from the client, but we need to read
-	// to detect disconnection.
-	for {
-		_, _, err := c.conn.ReadMessage()
-		if err != nil {
-			break
-		}
-	}
-}
-
-// ReadPumpWithHandler reads messages from the WebSocket and handles client commands.
-func (c *Client) ReadPumpWithHandler(reader interface{}, broadcaster interface{}) {
-	defer func() {
-		c.hub.Unregister(c)
-		c.conn.Close()
-	}()
-
-	for {
-		_, message, err := c.conn.ReadMessage()
-		if err != nil {
-			break
-		}
-
-		// Parse client message
-		var clientMsg ClientMessage
-		if err := json.Unmarshal(message, &clientMsg); err != nil {
-			log.Printf("Error parsing client message: %v", err)
-			continue
-		}
-
-		switch clientMsg.Type {
-		case "select_player":
-			// Handle player selection
-			if r, ok := reader.(interface{ SetActiveByPlayerIndex(int) bool }); ok {
-				if r.SetActiveByPlayerIndex(clientMsg.PlayerIndex) {
-					c.SetPlayerIndex(clientMsg.PlayerIndex)
-					// Send confirmation
-					msg := NewPlayerSelectedMessage(clientMsg.PlayerIndex)
-					data, _ := json.Marshal(msg)
-					c.send <- data
-					log.Printf("Client switched to player %d", clientMsg.PlayerIndex)
-				} else {
-					log.Printf("Failed to switch to player %d: invalid index", clientMsg.PlayerIndex)
-				}
-			}
 		}
 	}
 }

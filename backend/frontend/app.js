@@ -130,58 +130,45 @@ function handleMessage(msg) {
     }
 }
 
+// Helper: Merge nested state objects
+function mergeState(target, source) {
+    if (source.connected !== undefined) {
+        target.connected = source.connected;
+    }
+    if (source.controllerType !== undefined) {
+        target.controllerType = source.controllerType;
+    }
+    if (source.name !== undefined) {
+        target.name = source.name;
+    }
+    if (source.buttons) Object.assign(target.buttons, source.buttons);
+    if (source.dpad) Object.assign(target.dpad, source.dpad);
+    
+    if (source.sticks) {
+        if (source.sticks.left) {
+            if (source.sticks.left.position) Object.assign(target.sticks.left.position, source.sticks.left.position);
+            if (source.sticks.left.pressed !== undefined) target.sticks.left.pressed = source.sticks.left.pressed;
+        }
+        if (source.sticks.right) {
+            if (source.sticks.right.position) Object.assign(target.sticks.right.position, source.sticks.right.position);
+            if (source.sticks.right.pressed !== undefined) target.sticks.right.pressed = source.sticks.right.pressed;
+        }
+    }
+    
+    if (source.triggers) {
+        if (source.triggers.lt) target.triggers.lt.value = source.triggers.lt.value ?? 0;
+        if (source.triggers.rt) target.triggers.rt.value = source.triggers.rt.value ?? 0;
+    }
+}
+
 function applyFullState(data) {
-    Object.assign(state, {
-        connected: data.connected ?? state.connected,
-        controllerType: data.controllerType ?? state.controllerType,
-        name: data.name ?? state.name,
-    });
-    if (data.buttons) Object.assign(state.buttons, data.buttons);
-    if (data.dpad) Object.assign(state.dpad, data.dpad);
-    if (data.sticks) {
-        if (data.sticks.left) {
-            if (data.sticks.left.position) Object.assign(state.sticks.left.position, data.sticks.left.position);
-            state.sticks.left.pressed = data.sticks.left.pressed ?? state.sticks.left.pressed;
-        }
-        if (data.sticks.right) {
-            if (data.sticks.right.position) Object.assign(state.sticks.right.position, data.sticks.right.position);
-            state.sticks.right.pressed = data.sticks.right.pressed ?? state.sticks.right.pressed;
-        }
-    }
-    if (data.triggers) {
-        if (data.triggers.lt) state.triggers.lt.value = data.triggers.lt.value ?? 0;
-        if (data.triggers.rt) state.triggers.rt.value = data.triggers.rt.value ?? 0;
-    }
+    mergeState(state, data);
     updateControllerInfo();
     loadConfigIfNeeded();
 }
 
 function applyDelta(changes) {
-    if (changes.connected !== undefined && changes.connected !== null) {
-        state.connected = changes.connected;
-    }
-    if (changes.controllerType !== undefined && changes.controllerType !== null) {
-        state.controllerType = changes.controllerType;
-    }
-    if (changes.name !== undefined && changes.name !== null) {
-        state.name = changes.name;
-    }
-    if (changes.buttons) Object.assign(state.buttons, changes.buttons);
-    if (changes.dpad) Object.assign(state.dpad, changes.dpad);
-    if (changes.sticks) {
-        if (changes.sticks.left) {
-            if (changes.sticks.left.position) Object.assign(state.sticks.left.position, changes.sticks.left.position);
-            if (changes.sticks.left.pressed !== undefined) state.sticks.left.pressed = changes.sticks.left.pressed;
-        }
-        if (changes.sticks.right) {
-            if (changes.sticks.right.position) Object.assign(state.sticks.right.position, changes.sticks.right.position);
-            if (changes.sticks.right.pressed !== undefined) state.sticks.right.pressed = changes.sticks.right.pressed;
-        }
-    }
-    if (changes.triggers) {
-        if (changes.triggers.lt) state.triggers.lt.value = changes.triggers.lt.value ?? state.triggers.lt.value;
-        if (changes.triggers.rt) state.triggers.rt.value = changes.triggers.rt.value ?? state.triggers.rt.value;
-    }
+    mergeState(state, changes);
     updateControllerInfo();
     loadConfigIfNeeded();
 }
@@ -310,6 +297,16 @@ function hexToRgba(hex, alpha) {
     return `rgba(${r}, ${g}, ${b}, ${alpha})`;
 }
 
+// Helper: Resolve label config with fallbacks
+function resolveLabelConfig(posLabelConfig, defaultLabelConfig, defaults) {
+    return {
+        text: posLabelConfig.text,
+        fontSize: posLabelConfig.fontSize || defaultLabelConfig.fontSize || defaults.fontSize,
+        fontWeight: posLabelConfig.fontWeight || defaultLabelConfig.fontWeight || defaults.fontWeight,
+        color: posLabelConfig.color || defaults.color,
+    };
+}
+
 function render() {
     ctx.clearRect(0, 0, W, H);
 
@@ -436,6 +433,63 @@ function drawBody(cfg) {
 }
 
 // --- D-pad ---
+
+// Helper function to draw a single D-pad direction (pentagon shape)
+function drawDpadDirection(cx, cy, size, arm, direction, pressed) {
+    const points = [];
+    const halfArm = arm / 2;
+    
+    switch (direction) {
+        case 'up':
+            points.push([cx - halfArm, cy - size]);
+            points.push([cx + halfArm, cy - size]);
+            points.push([cx + halfArm, cy - halfArm]);
+            points.push([cx, cy]);
+            points.push([cx - halfArm, cy - halfArm]);
+            break;
+        case 'down':
+            points.push([cx - halfArm, cy + size]);
+            points.push([cx + halfArm, cy + size]);
+            points.push([cx + halfArm, cy + halfArm]);
+            points.push([cx, cy]);
+            points.push([cx - halfArm, cy + halfArm]);
+            break;
+        case 'left':
+            points.push([cx - size, cy - halfArm]);
+            points.push([cx - size, cy + halfArm]);
+            points.push([cx - halfArm, cy + halfArm]);
+            points.push([cx, cy]);
+            points.push([cx - halfArm, cy - halfArm]);
+            break;
+        case 'right':
+            points.push([cx + size, cy - halfArm]);
+            points.push([cx + size, cy + halfArm]);
+            points.push([cx + halfArm, cy + halfArm]);
+            points.push([cx, cy]);
+            points.push([cx + halfArm, cy - halfArm]);
+            break;
+    }
+    
+    ctx.fillStyle = pressed ? COLORS.dpadPressed : COLORS.dpadBg;
+    ctx.beginPath();
+    ctx.moveTo(points[0][0], points[0][1]);
+    for (let i = 1; i < points.length; i++) {
+        ctx.lineTo(points[i][0], points[i][1]);
+    }
+    ctx.closePath();
+    ctx.fill();
+    
+    ctx.strokeStyle = COLORS.outline;
+    ctx.lineWidth = 1.5;
+    ctx.beginPath();
+    ctx.moveTo(points[0][0], points[0][1]);
+    for (let i = 1; i < points.length; i++) {
+        ctx.lineTo(points[i][0], points[i][1]);
+    }
+    ctx.closePath();
+    ctx.stroke();
+}
+
 function drawDpad(cfg) {
     const dpad = cfg.dpad;
     if (!dpad) return;
@@ -445,92 +499,10 @@ function drawDpad(cfg) {
     const size = dpad.size || 30;
     const arm = dpad.armWidth || 22;
 
-    // Draw four separate directional shapes with diagonal separators
-    // Each direction is a pentagon shape that meets at center with diagonal edges
-
-    // Up direction
-    ctx.fillStyle = state.dpad.up ? COLORS.dpadPressed : COLORS.dpadBg;
-    ctx.beginPath();
-    ctx.moveTo(cx - arm / 2, cy - size);
-    ctx.lineTo(cx + arm / 2, cy - size);
-    ctx.lineTo(cx + arm / 2, cy - arm / 2);
-    ctx.lineTo(cx, cy);
-    ctx.lineTo(cx - arm / 2, cy - arm / 2);
-    ctx.closePath();
-    ctx.fill();
-
-    // Down direction
-    ctx.fillStyle = state.dpad.down ? COLORS.dpadPressed : COLORS.dpadBg;
-    ctx.beginPath();
-    ctx.moveTo(cx - arm / 2, cy + size);
-    ctx.lineTo(cx + arm / 2, cy + size);
-    ctx.lineTo(cx + arm / 2, cy + arm / 2);
-    ctx.lineTo(cx, cy);
-    ctx.lineTo(cx - arm / 2, cy + arm / 2);
-    ctx.closePath();
-    ctx.fill();
-
-    // Left direction
-    ctx.fillStyle = state.dpad.left ? COLORS.dpadPressed : COLORS.dpadBg;
-    ctx.beginPath();
-    ctx.moveTo(cx - size, cy - arm / 2);
-    ctx.lineTo(cx - size, cy + arm / 2);
-    ctx.lineTo(cx - arm / 2, cy + arm / 2);
-    ctx.lineTo(cx, cy);
-    ctx.lineTo(cx - arm / 2, cy - arm / 2);
-    ctx.closePath();
-    ctx.fill();
-
-    // Right direction
-    ctx.fillStyle = state.dpad.right ? COLORS.dpadPressed : COLORS.dpadBg;
-    ctx.beginPath();
-    ctx.moveTo(cx + size, cy - arm / 2);
-    ctx.lineTo(cx + size, cy + arm / 2);
-    ctx.lineTo(cx + arm / 2, cy + arm / 2);
-    ctx.lineTo(cx, cy);
-    ctx.lineTo(cx + arm / 2, cy - arm / 2);
-    ctx.closePath();
-    ctx.fill();
-
-    // Draw outline
-    ctx.strokeStyle = COLORS.outline;
-    ctx.lineWidth = 1.5;
-    // Up outline
-    ctx.beginPath();
-    ctx.moveTo(cx - arm / 2, cy - size);
-    ctx.lineTo(cx + arm / 2, cy - size);
-    ctx.lineTo(cx + arm / 2, cy - arm / 2);
-    ctx.lineTo(cx, cy);
-    ctx.lineTo(cx - arm / 2, cy - arm / 2);
-    ctx.closePath();
-    ctx.stroke();
-    // Down outline
-    ctx.beginPath();
-    ctx.moveTo(cx - arm / 2, cy + size);
-    ctx.lineTo(cx + arm / 2, cy + size);
-    ctx.lineTo(cx + arm / 2, cy + arm / 2);
-    ctx.lineTo(cx, cy);
-    ctx.lineTo(cx - arm / 2, cy + arm / 2);
-    ctx.closePath();
-    ctx.stroke();
-    // Left outline
-    ctx.beginPath();
-    ctx.moveTo(cx - size, cy - arm / 2);
-    ctx.lineTo(cx - size, cy + arm / 2);
-    ctx.lineTo(cx - arm / 2, cy + arm / 2);
-    ctx.lineTo(cx, cy);
-    ctx.lineTo(cx - arm / 2, cy - arm / 2);
-    ctx.closePath();
-    ctx.stroke();
-    // Right outline
-    ctx.beginPath();
-    ctx.moveTo(cx + size, cy - arm / 2);
-    ctx.lineTo(cx + size, cy + arm / 2);
-    ctx.lineTo(cx + arm / 2, cy + arm / 2);
-    ctx.lineTo(cx, cy);
-    ctx.lineTo(cx + arm / 2, cy - arm / 2);
-    ctx.closePath();
-    ctx.stroke();
+    drawDpadDirection(cx, cy, size, arm, 'up', state.dpad.up);
+    drawDpadDirection(cx, cy, size, arm, 'down', state.dpad.down);
+    drawDpadDirection(cx, cy, size, arm, 'left', state.dpad.left);
+    drawDpadDirection(cx, cy, size, arm, 'right', state.dpad.right);
 }
 
 // --- Face Buttons (A, B, X, Y) ---
@@ -584,11 +556,15 @@ function drawFaceButtons(cfg) {
         if (!pos) continue;
 
         const pressed = state.buttons[def.key];
-        const posLabelConfig = pos.label || {};
-        const labelText = posLabelConfig.text;
-        const labelColor = posLabelConfig.color || def.defaultColor;
-        const fontSize = posLabelConfig.fontSize || defaultLabelConfig.fontSize || r;
-        const fontWeight = posLabelConfig.fontWeight || defaultLabelConfig.fontWeight || 'normal';
+        const labelConfig = resolveLabelConfig(pos.label || {}, defaultLabelConfig, {
+            fontSize: r,
+            fontWeight: 'normal',
+            color: def.defaultColor,
+        });
+        const labelText = labelConfig.text;
+        const labelColor = labelConfig.color;
+        const fontSize = labelConfig.fontSize;
+        const fontWeight = labelConfig.fontWeight;
 
         // Draw button background
         ctx.beginPath();
@@ -631,10 +607,13 @@ function drawShoulderButtons(cfg) {
         if (!s) continue;
         const pressed = state.buttons[side];
 
-        const posLabelConfig = s.label || {};
-        const labelText = posLabelConfig.text;
-        const fontSize = posLabelConfig.fontSize || defaultLabelConfig.fontSize || 15;
-        const fontWeight = posLabelConfig.fontWeight || defaultLabelConfig.fontWeight || 'normal';
+        const labelConfig = resolveLabelConfig(s.label || {}, defaultLabelConfig, {
+            fontSize: 15,
+            fontWeight: 'normal',
+        });
+        const labelText = labelConfig.text;
+        const fontSize = labelConfig.fontSize;
+        const fontWeight = labelConfig.fontWeight;
 
         ctx.fillStyle = pressed ? COLORS.buttonPressed : COLORS.buttonDefault;
         ctx.strokeStyle = COLORS.outline;
@@ -688,19 +667,18 @@ function drawTriggerLabels(cfg) {
     if (!triggers) return;
 
     const defaultLabelConfig = triggers.label || { fontSize: 13, fontWeight: 'normal' };
-    const fontSize = defaultLabelConfig.fontSize || 13;
-    const fontWeight = defaultLabelConfig.fontWeight || 'normal';
+    const defaults = { fontSize: 13, fontWeight: 'normal' };
 
     for (const side of ['lt', 'rt']) {
         const t = triggers[side];
         if (!t) continue;
 
-        const posLabelConfig = t.label || {};
-        const labelText = posLabelConfig.text;
+        const labelConfig = resolveLabelConfig(t.label || {}, defaultLabelConfig, defaults);
+        const labelText = labelConfig.text;
 
         if (labelText) {
             ctx.fillStyle = COLORS.buttonLabel;
-            ctx.font = `${fontWeight} ${fontSize}px "Segoe UI", sans-serif`;
+            ctx.font = `${labelConfig.fontWeight} ${labelConfig.fontSize}px "Segoe UI", sans-serif`;
             ctx.textAlign = 'center';
             ctx.textBaseline = 'middle';
             ctx.fillText(labelText, t.x + t.width / 2, t.y + t.height * 0.3);
@@ -798,11 +776,13 @@ function drawCenterButtons(cfg) {
         if (!b) continue;
         const pressed = state.buttons[key];
 
-        // Get label config for this specific button
-        const buttonLabelConfig = b.label || {};
-        const labelText = buttonLabelConfig.text;
-        const fontSize = buttonLabelConfig.fontSize || defaultLabelConfig.fontSize || 14;
-        const fontWeight = buttonLabelConfig.fontWeight || defaultLabelConfig.fontWeight || 'bold';
+        const labelConfig = resolveLabelConfig(b.label || {}, defaultLabelConfig, {
+            fontSize: 14,
+            fontWeight: 'bold',
+        });
+        const labelText = labelConfig.text;
+        const fontSize = labelConfig.fontSize;
+        const fontWeight = labelConfig.fontWeight;
 
         // Check if button is circular (has radius but no width/height)
         const isCircular = b.radius && !b.width && !b.height;

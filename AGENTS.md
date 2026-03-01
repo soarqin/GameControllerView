@@ -46,10 +46,12 @@ backend/
 │   │   └── console.go                  # Cross-platform console detection & Windows Ctrl+C handler (reusable)
 │   ├── gamepad/
 │   │   ├── state.go                    # GamepadState data model (includes PlayerIndex)
-│   │   ├── mapping.go                  # Device mapping table (raw axis/button index → semantic names)
+│   │   ├── mapping.go                  # Device mapping types & GetMapping() function
+│   │   ├── mapping_table.go            # VID/PID device mapping table (550+ entries)
 │   │   └── reader.go                   # SDL3 Joystick reader, supports multi-gamepad switching, SDL init callback
 │   ├── hub/
-│   │   ├── hub.go                      # WebSocket client management, targeted broadcast
+│   │   ├── hub.go                      # WebSocket hub: client management, targeted broadcast, main loop
+│   │   ├── client.go                   # WebSocket client: connection, read/write pumps, message handling
 │   │   ├── broadcast.go                # State change → targeted JSON broadcast
 │   │   └── message.go                  # WSMessage type definitions
 │   ├── server/
@@ -381,3 +383,50 @@ The `fyne.io/systray` library uses Windows message loops internally. If menu cli
 | `github.com/jupiterrider/purego-sdl3` | CGo-free SDL3 Go bindings |
 | `github.com/gorilla/websocket` | WebSocket server |
 | `github.com/ebitengine/purego` | Transitive dependency, FFI base for purego-sdl3 |
+| `fyne.io/systray` | Windows system tray integration |
+| `github.com/godbus/dbus/v5` | Transitive (via systray, Linux only) |
+
+## Code Refactoring (2026-03-01)
+
+Major refactoring and code simplification completed:
+
+### Dead Code Removal
+- Deleted unused `NewEventMessage()` function and `WSMessage.Event` field
+- Deleted unused `Client.ReadPump()` method (only `ReadPumpWithHandler` is used)
+- Deleted unused `Hub.Broadcast()` method and corresponding `case` in `Hub.Run()`
+- Deleted no-op `Reader.Close()` method
+- Deleted unused `Reader.CurrentState()` method
+- Removed duplicate VID/PID entry `{0x146b, 0x0d10}` in mapping table
+
+### API Cleanup
+- Removed unused `broadcaster` parameter from `Client.ReadPumpWithHandler()`
+
+### File Splitting
+- **`hub/hub.go`** split into:
+  - `hub/hub.go` - Hub type (client management, broadcast, run loop)
+  - `hub/client.go` - Client type (WebSocket connection, read/write pumps)
+- **`gamepad/mapping.go`** split into:
+  - `gamepad/mapping.go` - Mapping types and utility functions
+  - `gamepad/mapping_table.go` - VID/PID mapping data table (~550 entries)
+
+### Type Safety
+- Defined `PlayerSwitcher` interface in `hub/client.go` to replace anonymous `interface{}` parameter
+- Unexported `console.processEntry32` struct (was `PROCESSENTRY32`) - internal use only
+- Unexported `gamepad.normalizeAxis`, `normalizeTrigger`, `applyDeadzone` functions - internal use only
+
+### Mutex Pattern Fix
+- Fixed dangerous unlock-relock pattern in `Reader.SetActiveByPlayerIndex()`
+- Now uses explicit `Unlock()` before `emitState()`, eliminating risk of unlock panic
+
+### Frontend Code Quality
+- Extracted `drawDpadDirection()` helper function - reduced `drawDpad()` from 96 to 20 lines
+- Added `resolveLabelConfig()` helper for consistent label configuration resolution
+- Updated all button drawing functions to use the shared helper
+- Extracted `mergeState()` helper to unify `applyFullState()` and `applyDelta()` - eliminated ~40 lines of duplicated state merge logic
+
+### Code Deduplication
+- **PlayStation mappings**: Extracted shared `playStationAxes` and `playStationBaseButtons` arrays, created `newPlayStationMapping()` factory function - PS3/PS5 mappings now differ only by single extra button
+- **Console package**: Split into `console_windows.go` (Windows-specific implementation with `//go:build windows`) and `console_other.go` (stub for non-Windows platforms) - removed runtime `runtime.GOOS` checks
+
+### Build Verification
+All changes compiled successfully with `go build .`. No functional changes to the public API or user-facing behavior.

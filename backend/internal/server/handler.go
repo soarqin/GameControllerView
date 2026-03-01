@@ -33,7 +33,7 @@ func handleWebSocket(h *hub.Hub, b *hub.Broadcaster, reader *gamepad.Reader) htt
 
 		// Start write pump
 		go client.WritePump()
-		// Start read pump with reader and broadcaster for handling client messages
-		go client.ReadPumpWithHandler(reader, b)
+		// Start read pump with reader for handling client messages
+		go client.ReadPumpWithHandler(reader)
 	}
 }

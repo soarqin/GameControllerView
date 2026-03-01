@@ -1,3 +1,5 @@
+//go:build windows
+
 // Package console provides cross-platform console detection and signal handling.
 // On Windows, it provides utilities to detect if the program is running from a terminal
 // or was double-clicked (GUI mode), and sets up reliable Ctrl+C handling that works
@@ -7,7 +9,6 @@ package console
 import (
 	"log"
 	"os"
-	"runtime"
 	"strings"
 	"sync/atomic"
 	"syscall"
@@ -16,20 +17,20 @@ import (
 
 // Windows API declarations
 var (
-	kernel32                  = syscall.NewLazyDLL("kernel32.dll")
-	user32                    = syscall.NewLazyDLL("user32.dll")
-	procGetConsoleWindow      = kernel32.NewProc("GetConsoleWindow")
-	procAllocConsole          = kernel32.NewProc("AllocConsole")
-	procAttachConsole         = kernel32.NewProc("AttachConsole")
-	procFreeConsole           = kernel32.NewProc("FreeConsole")
-	procGetStdHandle          = kernel32.NewProc("GetStdHandle")
-	procSetStdHandle          = kernel32.NewProc("SetStdHandle")
-	procCreateToolhelp32Snapshot = kernel32.NewProc("CreateToolhelp32Snapshot")
-	procProcess32First        = kernel32.NewProc("Process32First")
-	procProcess32Next         = kernel32.NewProc("Process32Next")
-	procOpenProcess           = kernel32.NewProc("OpenProcess")
+	kernel32                       = syscall.NewLazyDLL("kernel32.dll")
+	user32                         = syscall.NewLazyDLL("user32.dll")
+	procGetConsoleWindow           = kernel32.NewProc("GetConsoleWindow")
+	procAllocConsole               = kernel32.NewProc("AllocConsole")
+	procAttachConsole              = kernel32.NewProc("AttachConsole")
+	procFreeConsole                = kernel32.NewProc("FreeConsole")
+	procGetStdHandle               = kernel32.NewProc("GetStdHandle")
+	procSetStdHandle               = kernel32.NewProc("SetStdHandle")
+	procCreateToolhelp32Snapshot   = kernel32.NewProc("CreateToolhelp32Snapshot")
+	procProcess32First             = kernel32.NewProc("Process32First")
+	procProcess32Next              = kernel32.NewProc("Process32Next")
+	procOpenProcess                = kernel32.NewProc("OpenProcess")
 	procQueryFullProcessImageNameW = kernel32.NewProc("QueryFullProcessImageNameW")
-	procSetConsoleCtrlHandler = kernel32.NewProc("SetConsoleCtrlHandler")
+	procSetConsoleCtrlHandler      = kernel32.NewProc("SetConsoleCtrlHandler")
 )
 
 const (
@@ -38,19 +39,19 @@ const (
 	MAX_PATH                   = 260
 	CTRL_C_EVENT               = 0
 	CTRL_BREAK_EVENT           = 1
-	ATTACH_PARENT_PROCESS      = ^uint32(0) // 0xFFFFFFFF, attaches to parent process console
+	ATTACH_PARENT_PROCESS      = ^uint32(0)          // 0xFFFFFFFF, attaches to parent process console
 	STD_INPUT_HANDLE           = ^uint32(0) - 10 + 1 // 0xFFFFFFF6, -10
 	STD_OUTPUT_HANDLE          = ^uint32(0) - 11 + 1 // 0xFFFFFFF5, -11
 	STD_ERROR_HANDLE           = ^uint32(0) - 12 + 1 // 0xFFFFFFF4, -12
 )
 
-// PROCESSENTRY32 is the structure for Process32First/Next
-type PROCESSENTRY32 struct {
+// processEntry32 is the structure for Process32First/Next (Windows internal use).
+type processEntry32 struct {
 	DwSize              uint32
 	CntUsage            uint32
 	Th32ProcessID       uint32
 	Th32DefaultHeapID   uintptr
-	Th32ModuleID         uint32
+	Th32ModuleID        uint32
 	CntThreads          uint32
 	Th32ParentProcessID uint32
 	PcPriClassBase      int32
@@ -62,18 +63,14 @@ type PROCESSENTRY32 struct {
 // Returns true if running from a terminal (cmd/PowerShell), false if GUI mode (double-clicked).
 //
 // On Windows, this function handles console allocation intelligently:
-// - If the program already has a console (console-mode build or launched from terminal),
-//   it reuses the existing console.
-// - If the program has no console (GUI-mode build) and was launched from a terminal,
-//   it allocates a new console window and redirects stdout/stderr/stdin.
-// - If the program was double-clicked (launched from explorer.exe), it returns false
-//   to indicate GUI mode (no console needed). If a console was auto-created (console-mode build),
-//   it frees the console to hide the window.
+//   - If the program already has a console (console-mode build or launched from terminal),
+//     it reuses the existing console.
+//   - If the program has no console (GUI-mode build) and was launched from a terminal,
+//     it allocates a new console window and redirects stdout/stderr/stdin.
+//   - If the program was double-clicked (launched from explorer.exe), it returns false
+//     to indicate GUI mode (no console needed). If a console was auto-created (console-mode build),
+//     it frees the console to hide the window.
 func IsRunningFromConsole() bool {
-	if runtime.GOOS != "windows" {
-		return true // Non-Windows platforms always have console
-	}
-
 	// Check if we already have a console window
 	if hasConsoleWindow() {
 		// Check if parent process is explorer.exe (double-click scenario)
@@ -177,7 +174,7 @@ func getParentProcessID(pid int) int {
 	}
 	defer syscall.CloseHandle(syscall.Handle(handle))
 
-	var entry PROCESSENTRY32
+	var entry processEntry32
 	entry.DwSize = uint32(unsafe.Sizeof(entry))
 
 	// First process
@@ -243,9 +240,9 @@ func freeConsole() {
 
 // consoleHandlerState holds the state for Windows console control handler
 type consoleHandlerState struct {
-	closed       int32          // atomic: 0 = not closed, 1 = closed
+	closed       int32 // atomic: 0 = not closed, 1 = closed
 	shutdownChan chan struct{}
-	callbackFn   uintptr        // Stores the callback function pointer
+	callbackFn   uintptr // Stores the callback function pointer
 }
 
 // Global state for Windows console handler (accessible from callback)
@@ -264,10 +261,6 @@ var globalHandlerState *consoleHandlerState
 //   - A function that can be called to re-register the handler after library initialization.
 //     This is necessary because some libraries (like SDL3) override console handlers during init.
 func SetupConsoleHandler(shutdownChan chan struct{}) func() {
-	if runtime.GOOS != "windows" {
-		return func() {}
-	}
-
 	// Allocate state on heap to ensure it's valid for the callback
 	globalHandlerState = &consoleHandlerState{
 		shutdownChan: shutdownChan,

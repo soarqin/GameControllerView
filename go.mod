@@ -1,4 +1,4 @@
-module github.com/soar/GameControllerView/backend
+module github.com/soar/gamecontrollerview
 
 go 1.25.6
 

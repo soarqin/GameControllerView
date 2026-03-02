@@ -3,7 +3,7 @@ package hub
 import (
 	"time"
 
-	"github.com/soar/GameControllerView/backend/internal/gamepad"
+	"github.com/soar/gamecontrollerview/internal/gamepad"
 )
 
 // WSMessage represents a WebSocket message sent from server to client.

@@ -5,7 +5,7 @@ import (
 	"log"
 	"time"
 
-	"github.com/soar/GameControllerView/backend/internal/gamepad"
+	"github.com/soar/gamecontrollerview/internal/gamepad"
 )
 
 const (

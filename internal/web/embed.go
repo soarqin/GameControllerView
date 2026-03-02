@@ -1,4 +1,4 @@
-package main
+package web
 
 import (
 	"embed"
@@ -8,8 +8,8 @@ import (
 //go:embed all:frontend
 var frontendFiles embed.FS
 
-// getFrontendFS returns a sub-filesystem rooted at the "frontend" directory.
-func getFrontendFS() fs.FS {
+// FrontendFS returns a sub-filesystem rooted at the "frontend" directory.
+func FrontendFS() fs.FS {
 	sub, err := fs.Sub(frontendFiles, "frontend")
 	if err != nil {
 		panic(err)

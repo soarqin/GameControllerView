@@ -10,11 +10,12 @@ import (
 	"syscall"
 	"time"
 
-	"github.com/soar/GameControllerView/backend/internal/console"
-	"github.com/soar/GameControllerView/backend/internal/gamepad"
-	"github.com/soar/GameControllerView/backend/internal/hub"
-	"github.com/soar/GameControllerView/backend/internal/server"
-	"github.com/soar/GameControllerView/backend/internal/tray"
+	"github.com/soar/gamecontrollerview/internal/console"
+	"github.com/soar/gamecontrollerview/internal/gamepad"
+	"github.com/soar/gamecontrollerview/internal/hub"
+	"github.com/soar/gamecontrollerview/internal/server"
+	"github.com/soar/gamecontrollerview/internal/tray"
+	"github.com/soar/gamecontrollerview/internal/web"
 )
 
 // buildShutdownSignals constructs the signal list based on the platform.
@@ -62,8 +63,7 @@ func main() {
 	go broadcaster.Run()
 
 	// Create and start HTTP server
-	frontendFS := getFrontendFS()
-	srv := server.New(h, broadcaster, reader, frontendFS, ":8080")
+	srv := server.New(h, broadcaster, reader, web.FrontendFS(), ":8080")
 	serverErrCh := make(chan error, 1)
 	go func() {
 		if err := srv.ListenAndServe(); err != nil && err != http.ErrServerClosed {

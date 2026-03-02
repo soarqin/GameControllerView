@@ -13,7 +13,7 @@ Go backend reads gamepad input via SDL3, pushes to frontend via WebSocket, and r
 ## Build and Run
 
 ```bash
-cd backend && go run .
+go run ./cmd/gamecontrollerview
 # Open browser at http://localhost:8080
 ```
 
@@ -38,37 +38,46 @@ http://localhost:8080/?p=2
 ## Project Structure
 
 ```
-backend/
-├── main.go                             # Entry: component assembly, signal handling
-├── embed.go                            # go:embed embeds frontend/ static files
-├── internal/
-│   ├── console/
-│   │   └── console.go                  # Cross-platform console detection & Windows Ctrl+C handler (reusable)
-│   ├── gamepad/
-│   │   ├── state.go                    # GamepadState data model (includes PlayerIndex)
-│   │   ├── mapping.go                  # Device mapping types & GetMapping() function
-│   │   ├── mapping_table.go            # VID/PID device mapping table (550+ entries)
-│   │   └── reader.go                   # SDL3 Joystick reader, supports multi-gamepad switching, SDL init callback
-│   ├── hub/
-│   │   ├── hub.go                      # WebSocket hub: client management, targeted broadcast, main loop
-│   │   ├── client.go                   # WebSocket client: connection, read/write pumps, message handling
-│   │   ├── broadcast.go                # State change → targeted JSON broadcast
-│   │   └── message.go                  # WSMessage type definitions
-│   ├── server/
-│   │   ├── server.go                   # HTTP server, graceful shutdown
-│   │   └── handler.go                  # WebSocket upgrade, client message handling
-│   └── tray/
-│       ├── tray.go                     # Windows system tray integration (atomic shutdown flag, non-blocking menu handling)
-│       └── icon.go                     # Embedded tray icon
-└── frontend/                           # Frontend static files (embedded via go:embed)
-    ├── index.html
-    ├── styles.css
-    ├── app.js                          # WebSocket client, URL param parsing, Canvas rendering
-    └── configs/                        # Gamepad layout JSON configs
-        ├── xbox.json
-        ├── playstation.json
-        ├── playstation5.json
-        └── switch_pro.json
+GameControllerView/
+├── go.mod                              # module github.com/soar/gamecontrollerview
+├── go.sum
+├── build.bat                           # Windows GUI-mode build script
+├── cmd/
+│   └── gamecontrollerview/
+│       ├── main.go                     # Entry: component assembly, signal handling
+│       ├── winres/                     # Windows resource definitions (icon, manifest)
+│       └── rsrc_windows_amd64.syso     # Compiled Windows resource object
+└── internal/
+    ├── console/
+    │   ├── console_windows.go          # Windows console detection & Ctrl+C handler (reusable)
+    │   └── console_other.go            # Stub for non-Windows platforms
+    ├── gamepad/
+    │   ├── state.go                    # GamepadState data model (includes PlayerIndex)
+    │   ├── mapping.go                  # Device mapping types & GetMapping() function
+    │   ├── mapping_table.go            # VID/PID device mapping table (550+ entries)
+    │   └── reader.go                   # SDL3 Joystick reader, supports multi-gamepad switching, SDL init callback
+    ├── hub/
+    │   ├── hub.go                      # WebSocket hub: client management, targeted broadcast, main loop
+    │   ├── client.go                   # WebSocket client: connection, read/write pumps, message handling
+    │   ├── broadcast.go                # State change → targeted JSON broadcast
+    │   └── message.go                  # WSMessage type definitions
+    ├── server/
+    │   ├── server.go                   # HTTP server, graceful shutdown
+    │   └── handler.go                  # WebSocket upgrade, client message handling
+    ├── tray/
+    │   ├── tray.go                     # Windows system tray integration (atomic shutdown flag, non-blocking menu handling)
+    │   └── icon.go                     # Embedded tray icon
+    └── web/
+        ├── embed.go                    # go:embed embeds frontend/ static files, exports FrontendFS()
+        └── frontend/                   # Frontend static files
+            ├── index.html
+            ├── styles.css
+            ├── app.js                  # WebSocket client, URL param parsing, Canvas rendering
+            └── configs/                # Gamepad layout JSON configs
+                ├── xbox.json
+                ├── playstation.json
+                ├── playstation5.json
+                └── switch_pro.json
 ```
 
 ## Architecture Highlights
@@ -114,7 +123,7 @@ goroutine: HTTP Server         ← Static files + WebSocket endpoint, graceful s
 The `internal/console` package provides cross-platform console detection and Windows Ctrl+C handling that can be reused in other projects:
 
 ```go
-import "github.com/soar/GameControllerView/backend/internal/console"
+import "github.com/soar/gamecontrollerview/internal/console"
 
 // Detect if running from console or GUI mode
 if console.IsRunningFromConsole() {
@@ -201,7 +210,7 @@ Intentionally uses SDL3 Joystick low-level API instead of Gamepad high-level API
 
 ### Frontend Configuration System
 
-`frontend/configs/*.json` defines Canvas drawing layout for each gamepad type (button coordinates, sizes, radii). Frontend automatically loads the corresponding config based on `controllerType` reported by backend.
+`internal/web/frontend/configs/*.json` defines Canvas drawing layout for each gamepad type (button coordinates, sizes, radii). Frontend automatically loads the corresponding config based on `controllerType` reported by backend.
 
 #### Body Shape Configuration
 
@@ -272,27 +281,27 @@ To import a controller shape from an existing SVG file:
 
 ### Adding New Gamepad Support
 
-1. `mapping.go`: Add VID/PID → DeviceMapping to `knownDevices` map
+1. `internal/gamepad/mapping.go`: Add VID/PID → DeviceMapping to `knownDevices` map
 2. If button layout differs from existing mappings, create new `DeviceMapping` variable
-3. `frontend/configs/`: Add new layout JSON file
-4. `frontend/app.js`: Add mapping name → config filename in `configMap`
+3. `internal/web/frontend/configs/`: Add new layout JSON file
+4. `internal/web/frontend/app.js`: Add mapping name → config filename in `configMap`
 
 ### Modifying Canvas Rendering
 
-All drawing logic is in `frontend/app.js` in `drawController()` and its sub-functions. Button positions and sizes are controlled by `configs/*.json`, colors by `COLORS` constants.
+All drawing logic is in `internal/web/frontend/app.js` in `drawController()` and its sub-functions. Button positions and sizes are controlled by `configs/*.json`, colors by `COLORS` constants.
 
 ### Adding New URL Parameters
 
-1. `frontend/app.js`: Parse URL parameters in `init()`
+1. `internal/web/frontend/app.js`: Parse URL parameters in `init()`
 2. Adjust rendering behavior based on parameters (e.g., `simpleMode`, `bodyAlpha`)
 
 ### Modifying Poll Frequency
 
-`pollDelayNS` constant in `reader.go` (currently 16ms ≈ 60Hz).
+`pollDelayNS` constant in `internal/gamepad/reader.go` (currently 16ms ≈ 60Hz).
 
 ### Modifying Deadzone
 
-`deadzone` constant in `reader.go` (currently 0.05), `analogThreshold` constant in `state.go` (currently 0.01, used for delta comparison).
+`deadzone` constant in `internal/gamepad/reader.go` (currently 0.05), `analogThreshold` constant in `internal/gamepad/state.go` (currently 0.01, used for delta comparison).
 
 ### Using SDL Initialization Callback (Platform-Specific Setup)
 
@@ -350,12 +359,12 @@ func main() {
 **Build Mode Examples:**
 ```bash
 # Console-mode build (default)
-go build -o myapp.exe
+go build -o myapp.exe ./cmd/gamecontrollerview
 # - From terminal: shows console output
 # - Double-clicked: hides console window (GUI mode)
 
 # GUI-mode build (no console window by default)
-go build -ldflags "-H windowsgui" -o myapp.exe
+go build -ldflags "-H windowsgui" -o myapp.exe ./cmd/gamecontrollerview
 # - From terminal: creates new console window + redirects stdout/stderr/stdin
 # - Double-clicked: no console (pure GUI)
 ```
@@ -430,3 +439,20 @@ Major refactoring and code simplification completed:
 
 ### Build Verification
 All changes compiled successfully with `go build .`. No functional changes to the public API or user-facing behavior.
+
+## Directory Restructure (2026-03-03)
+
+Project restructured to standard Go layout:
+
+### Changes
+- **Module path**: `github.com/soar/GameControllerView/backend` → `github.com/soar/gamecontrollerview` (lowercase, no `/backend` suffix)
+- **`go.mod` / `go.sum`**: Moved from `backend/` to project root
+- **Entry point**: `backend/main.go` + `backend/embed.go` → `cmd/gamecontrollerview/main.go`
+- **Internal packages**: `backend/internal/` → `internal/`
+- **Frontend embed**: Extracted into dedicated `internal/web/` package
+  - `backend/frontend/` → `internal/web/frontend/`
+  - New `internal/web/embed.go` exports `FrontendFS() fs.FS` function
+  - `main.go` calls `web.FrontendFS()` and passes result to `server.New()`
+- **Windows resources**: `backend/winres/` + `backend/rsrc_windows_amd64.syso` → `cmd/gamecontrollerview/winres/` + `cmd/gamecontrollerview/rsrc_windows_amd64.syso`
+- **`build.bat`**: Updated to `go build -ldflags "..." -o GameControllerView.exe ./cmd/gamecontrollerview` (no more `pushd backend`)
+- **`backend/` directory**: Removed entirely

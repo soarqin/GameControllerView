@@ -5,8 +5,8 @@ import (
 	"net/http"
 
 	"github.com/gorilla/websocket"
-	"github.com/soar/GameControllerView/backend/internal/gamepad"
-	"github.com/soar/GameControllerView/backend/internal/hub"
+	"github.com/soar/gamecontrollerview/internal/gamepad"
+	"github.com/soar/gamecontrollerview/internal/hub"
 )
 
 var upgrader = websocket.Upgrader{

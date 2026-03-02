@@ -1,11 +1,9 @@
 @echo off
 echo Building GameControllerView...
-pushd backend >NUL
-go build -ldflags "-s -w -H=windowsgui" -o GameControllerView.exe
+go build -ldflags "-s -w -H=windowsgui" -o GameControllerView.exe ./cmd/gamecontrollerview
 if errorlevel 1 (
     echo Build failed!
     exit /b 1
 )
-popd >NUL
-echo Build complete: backend\GameControllerView.exe
+echo Build complete: GameControllerView.exe
 pause

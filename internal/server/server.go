@@ -6,8 +6,8 @@ import (
 	"log"
 	"net/http"
 
-	"github.com/soar/GameControllerView/backend/internal/gamepad"
-	"github.com/soar/GameControllerView/backend/internal/hub"
+	"github.com/soar/gamecontrollerview/internal/gamepad"
+	"github.com/soar/gamecontrollerview/internal/hub"
 )
 
 type Server struct {

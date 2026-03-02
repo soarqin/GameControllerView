@@ -21,14 +21,14 @@ A real-time game controller visualization tool that reads gamepad input via SDL3
 
 ```bash
 # Clone the repository
-git clone https://github.com/soar/GameControllerView.git
-cd GameControllerView/backend
+git clone https://github.com/soarqin/GameControllerView.git
+cd GameControllerView
 
 # Install dependencies
 go mod download
 
 # Run the server
-go run .
+go run ./cmd/gamecontrollerview
 
 # Open browser to http://localhost:8080
 ```
@@ -45,7 +45,7 @@ The frontend supports the following URL parameters to customize the display:
 
 ### Examples
 
-```bash
+```
 # Display the first controller (default)
 http://localhost:8080/
 
@@ -66,64 +66,72 @@ http://localhost:8080/?p=2&simple=1&alpha=0.3
 
 To view multiple controllers simultaneously, open multiple browser windows/tabs with different `p` values:
 
-```bash
-# First controller
-http://localhost:8080/?p=1
-
-# Second controller
-http://localhost:8080/?p=2
-
-# Third controller
-http://localhost:8080/?p=3
+```
+http://localhost:8080/?p=1   # First controller
+http://localhost:8080/?p=2   # Second controller
+http://localhost:8080/?p=3   # Third controller
 ```
 
 ## Project Structure
 
 ```
-backend/
-├── main.go                             # Entry point: component assembly, SDL main thread event loop
-├── embed.go                            # go:embed frontend static files
-├── internal/
-│   ├── gamepad/
-│   │   ├── state.go                    # GamepadState data model, DeltaChanges, ComputeDelta
-│   │   ├── mapping.go                  # Device mapping (raw axis/button indices → semantic names)
-│   │   └── reader.go                   # SDL3 Joystick reader (event + polling hybrid loop)
-│   ├── hub/
-│   │   ├── hub.go                      # WebSocket client management (register/unregister/broadcast)
-│   │   ├── broadcast.go                # State changes → JSON broadcast (delta + periodic full sync)
-│   │   └── message.go                  # WSMessage type definitions (full/delta/event)
-│   └── server/
-│       ├── server.go                   # HTTP server, routing (/ static files, /ws WebSocket)
-│       └── handler.go                  # WebSocket upgrade handling
-└── frontend/                           # Frontend static files (embedded via go:embed)
-    ├── index.html
-    ├── styles.css
-    ├── app.js                          # WebSocket client + state management + Canvas rendering
-    └── configs/                        # Controller layout JSON configs
-        ├── xbox.json
-        ├── playstation.json
-        ├── switch_pro.json
-        └── generic.json
+GameControllerView/
+├── go.mod                              # module github.com/soar/gamecontrollerview
+├── go.sum
+├── build.bat                           # Windows GUI-mode build script
+├── cmd/
+│   └── gamecontrollerview/
+│       ├── main.go                     # Entry point: component assembly, signal handling
+│       ├── winres/                     # Windows resource definitions (icon, manifest)
+│       └── rsrc_windows_amd64.syso     # Compiled Windows resource object
+└── internal/
+    ├── console/                        # Cross-platform console detection & Windows Ctrl+C handler
+    ├── gamepad/
+    │   ├── state.go                    # GamepadState data model, DeltaChanges, ComputeDelta
+    │   ├── mapping.go                  # Device mapping (raw axis/button indices → semantic names)
+    │   ├── mapping_table.go            # VID/PID mapping table (550+ entries)
+    │   └── reader.go                   # SDL3 Joystick reader (event + polling hybrid loop)
+    ├── hub/
+    │   ├── hub.go                      # WebSocket client management (register/unregister/broadcast)
+    │   ├── client.go                   # WebSocket client (read/write pumps)
+    │   ├── broadcast.go                # State changes → JSON broadcast (delta + periodic full sync)
+    │   └── message.go                  # WSMessage type definitions (full/delta/player_selected)
+    ├── server/
+    │   ├── server.go                   # HTTP server, routing (/ static files, /ws WebSocket)
+    │   └── handler.go                  # WebSocket upgrade handling
+    ├── tray/                           # Windows system tray integration
+    └── web/
+        ├── embed.go                    # go:embed frontend static files, exports FrontendFS()
+        └── frontend/                   # Frontend static files (embedded at build time)
+            ├── index.html
+            ├── styles.css
+            ├── app.js                  # WebSocket client + state management + Canvas rendering
+            └── configs/                # Controller layout JSON configs
+                ├── xbox.json
+                ├── playstation.json
+                ├── playstation5.json
+                └── switch_pro.json
 ```
 
 ## Architecture
 
 ### Thread Model
 
-SDL3 must run on the OS main thread. `main.go` blocks the main thread with `reader.Run(ctx)` executing the SDL event loop, while the Hub and HTTP server run in independent goroutines.
+SDL3 must run on the OS main thread. `reader.Run(ctx)` is executed in a goroutine that calls `runtime.LockOSThread`, while the Hub and HTTP server run in independent goroutines.
 
 ```
-Main Thread (runtime.LockOSThread)
-├── SDL Init → PollEvent + Joystick Polling (~60Hz)
-│
-goroutine: Hub.Run()        ← Manages WebSocket client connections
-goroutine: Broadcaster.Run() ← Listens to Reader.Changes() channel, broadcasts to Hub
-goroutine: HTTP Server       ← Static files + WebSocket endpoint
+goroutine: Reader.Run(ctx)     ← SDL Init → Callback → PollEvent + Joystick Polling (~60Hz)
+                                   ↓
+                            chan GamepadState
+                                   ↓
+goroutine: Broadcaster.Run()   ← Listens for changes, broadcasts to matched clients
+goroutine: Hub.Run()           ← Manages WebSocket client connections
+goroutine: HTTP Server         ← Static files + WebSocket endpoint
 ```
 
 ### Data Flow
 
-`Reader` (SDL polling) → `chan GamepadState` → `Broadcaster` → `Hub.Broadcast()` → All WebSocket clients
+`Reader` (SDL polling) → `chan GamepadState` → `Broadcaster` → `Hub.BroadcastToPlayer()` → WebSocket clients
 
 ### Joystick Low-Level API (Not Gamepad)
 
@@ -131,9 +139,14 @@ Intentionally uses SDL3 Joystick low-level API instead of Gamepad high-level API
 
 ### WebSocket Message Protocol
 
+**Server → Client:**
 - `full`: Complete state snapshot (sent on new client connection, every 5 seconds, and after every 100 delta messages)
 - `delta`: Only changed fields (normal updates)
+- `player_selected`: Confirms gamepad switch
 - All messages include `seq` (incrementing sequence number) and `timestamp` (millisecond timestamp)
+
+**Client → Server:**
+- `select_player`: Select which gamepad to listen to
 
 ### Device Mapping System
 
@@ -145,7 +158,7 @@ Intentionally uses SDL3 Joystick low-level API instead of Gamepad high-level API
 
 ### Frontend Configuration System
 
-`frontend/configs/*.json` defines Canvas drawing layouts for each controller (button coordinates, sizes, radii). The frontend automatically loads the corresponding config based on the `controllerType` reported by the backend.
+`internal/web/frontend/configs/*.json` defines Canvas drawing layouts for each controller (button coordinates, sizes, radii). The frontend automatically loads the corresponding config based on the `controllerType` reported by the backend.
 
 ## Dependencies
 
@@ -154,27 +167,28 @@ Intentionally uses SDL3 Joystick low-level API instead of Gamepad high-level API
 | `github.com/jupiterrider/purego-sdl3` | CGo-free SDL3 Go bindings |
 | `github.com/gorilla/websocket` | WebSocket server |
 | `github.com/ebitengine/purego` | Indirect dependency, FFI base for purego-sdl3 |
+| `fyne.io/systray` | Windows system tray integration |
 
 ## Common Modifications
 
 ### Adding Support for New Controllers
 
-1. `mapping.go`: Add VID/PID → DeviceMapping to the `knownDevices` map
+1. `internal/gamepad/mapping.go`: Add VID/PID → DeviceMapping to the `knownDevices` map
 2. If button layout differs from existing mappings, create a new `DeviceMapping` variable
-3. `frontend/configs/`: Add a new layout JSON file
-4. `frontend/app.js`: Add mapping name → config filename to `configMap`
+3. `internal/web/frontend/configs/`: Add a new layout JSON file
+4. `internal/web/frontend/app.js`: Add mapping name → config filename to `configMap`
 
 ### Modifying Canvas Rendering
 
-All drawing logic is in `frontend/app.js` in the `drawController()` function and its sub-functions. Button positions and sizes are controlled by `configs/*.json`, colors are controlled by the `COLORS` constant.
+All drawing logic is in `internal/web/frontend/app.js` in the `drawController()` function and its sub-functions. Button positions and sizes are controlled by `configs/*.json`, colors are controlled by the `COLORS` constant.
 
 ### Changing Polling Frequency
 
-The `pollDelayNS` constant in `reader.go` (currently 16ms ≈ 60Hz).
+The `pollDelayNS` constant in `internal/gamepad/reader.go` (currently 16ms ≈ 60Hz).
 
 ### Changing Deadzone
 
-The `deadzone` constant in `reader.go` (currently 0.05), and the `analogThreshold` constant in `state.go` (currently 0.01, used for delta comparison).
+The `deadzone` constant in `internal/gamepad/reader.go` (currently 0.05), and the `analogThreshold` constant in `internal/gamepad/state.go` (currently 0.01, used for delta comparison).
 
 ## License
 

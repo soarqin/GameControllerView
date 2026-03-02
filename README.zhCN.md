@@ -21,14 +21,14 @@
 
 ```bash
 # 克隆仓库
-git clone https://github.com/soar/GameControllerView.git
-cd GameControllerView/backend
+git clone https://github.com/soarqin/GameControllerView.git
+cd GameControllerView
 
 # 安装依赖
 go mod download
 
 # 运行服务器
-go run .
+go run ./cmd/gamecontrollerview
 
 # 浏览器打开 http://localhost:8080
 ```
@@ -45,7 +45,7 @@ go run .
 
 ### 使用示例
 
-```bash
+```
 # 显示第一个手柄（默认）
 http://localhost:8080/
 
@@ -66,64 +66,72 @@ http://localhost:8080/?p=2&simple=1&alpha=0.3
 
 要同时查看多个手柄，打开多个浏览器窗口/标签页，使用不同的 `p` 值：
 
-```bash
-# 第一个手柄
-http://localhost:8080/?p=1
-
-# 第二个手柄
-http://localhost:8080/?p=2
-
-# 第三个手柄
-http://localhost:8080/?p=3
+```
+http://localhost:8080/?p=1   # 第一个手柄
+http://localhost:8080/?p=2   # 第二个手柄
+http://localhost:8080/?p=3   # 第三个手柄
 ```
 
 ## 项目结构
 
 ```
-backend/
-├── main.go                             # 入口：组件组装，SDL 主线程事件循环
-├── embed.go                            # go:embed 嵌入前端静态文件
-├── internal/
-│   ├── gamepad/
-│   │   ├── state.go                    # GamepadState 数据模型，DeltaChanges，ComputeDelta
-│   │   ├── mapping.go                  # 设备映射（原始轴/按键索引 → 语义名称）
-│   │   └── reader.go                   # SDL3 Joystick 读取器（事件 + 轮询混合循环）
-│   ├── hub/
-│   │   ├── hub.go                      # WebSocket 客户端管理（注册/注销/广播）
-│   │   ├── broadcast.go                # 状态变更 → JSON 广播（增量 + 定期全量同步）
-│   │   └── message.go                  # WSMessage 类型定义（full/delta/event）
-│   └── server/
-│       ├── server.go                   # HTTP 服务器，路由（/ 静态文件，/ws WebSocket）
-│       └── handler.go                  # WebSocket 升级处理
-└── frontend/                           # 前端静态文件（通过 go:embed 嵌入）
-    ├── index.html
-    ├── styles.css
-    ├── app.js                          # WebSocket 客户端 + 状态管理 + Canvas 渲染
-    └── configs/                        # 手柄布局 JSON 配置
-        ├── xbox.json
-        ├── playstation.json
-        ├── playstation5.json
-        └── switch_pro.json
+GameControllerView/
+├── go.mod                              # module github.com/soar/gamecontrollerview
+├── go.sum
+├── build.bat                           # Windows GUI 模式构建脚本
+├── cmd/
+│   └── gamecontrollerview/
+│       ├── main.go                     # 入口：组件组装，信号处理
+│       ├── winres/                     # Windows 资源定义（图标、清单）
+│       └── rsrc_windows_amd64.syso     # 编译后的 Windows 资源对象
+└── internal/
+    ├── console/                        # 跨平台控制台检测 & Windows Ctrl+C 处理
+    ├── gamepad/
+    │   ├── state.go                    # GamepadState 数据模型，DeltaChanges，ComputeDelta
+    │   ├── mapping.go                  # 设备映射（原始轴/按键索引 → 语义名称）
+    │   ├── mapping_table.go            # VID/PID 映射表（550+ 条目）
+    │   └── reader.go                   # SDL3 Joystick 读取器（事件 + 轮询混合循环）
+    ├── hub/
+    │   ├── hub.go                      # WebSocket 客户端管理（注册/注销/广播）
+    │   ├── client.go                   # WebSocket 客户端（读写泵）
+    │   ├── broadcast.go                # 状态变更 → JSON 广播（增量 + 定期全量同步）
+    │   └── message.go                  # WSMessage 类型定义（full/delta/player_selected）
+    ├── server/
+    │   ├── server.go                   # HTTP 服务器，路由（/ 静态文件，/ws WebSocket）
+    │   └── handler.go                  # WebSocket 升级处理
+    ├── tray/                           # Windows 系统托盘集成
+    └── web/
+        ├── embed.go                    # go:embed 嵌入前端静态文件，导出 FrontendFS()
+        └── frontend/                   # 前端静态文件（构建时嵌入）
+            ├── index.html
+            ├── styles.css
+            ├── app.js                  # WebSocket 客户端 + 状态管理 + Canvas 渲染
+            └── configs/                # 手柄布局 JSON 配置
+                ├── xbox.json
+                ├── playstation.json
+                ├── playstation5.json
+                └── switch_pro.json
 ```
 
 ## 架构设计
 
 ### 线程模型
 
-SDL3 必须在 OS 主线程运行。`main.go` 阻塞主线程执行 `reader.Run(ctx)` 的 SDL 事件循环，Hub 和 HTTP 服务器在独立的 goroutine 中运行。
+SDL3 必须在 OS 主线程运行。`reader.Run(ctx)` 在调用 `runtime.LockOSThread` 的 goroutine 中执行，Hub 和 HTTP 服务器在独立的 goroutine 中运行。
 
 ```
-主线程 (runtime.LockOSThread)
-├── SDL Init → PollEvent + Joystick 轮询 (~60Hz)
-│
-goroutine: Hub.Run()        ← 管理 WebSocket 客户端连接
-goroutine: Broadcaster.Run() ← 监听 Reader.Changes() channel，广播给 Hub
-goroutine: HTTP Server       ← 静态文件 + WebSocket 端点
+goroutine: Reader.Run(ctx)     ← SDL 初始化 → 回调 → PollEvent + Joystick 轮询 (~60Hz)
+                                   ↓
+                            chan GamepadState
+                                   ↓
+goroutine: Broadcaster.Run()   ← 监听状态变更，广播给匹配的客户端
+goroutine: Hub.Run()           ← 管理 WebSocket 客户端连接
+goroutine: HTTP Server         ← 静态文件 + WebSocket 端点
 ```
 
 ### 数据流
 
-`Reader` (SDL 轮询) → `chan GamepadState` → `Broadcaster` → `Hub.Broadcast()` → 所有 WebSocket 客户端
+`Reader`（SDL 轮询）→ `chan GamepadState` → `Broadcaster` → `Hub.BroadcastToPlayer()` → WebSocket 客户端
 
 ### Joystick 低级 API（非 Gamepad）
 
@@ -131,9 +139,14 @@ goroutine: HTTP Server       ← 静态文件 + WebSocket 端点
 
 ### WebSocket 消息协议
 
-- `full`: 完整状态快照（新客户端连接时、每 5 秒、每 100 条增量消息后发送）
-- `delta`: 仅包含变更字段（常规更新）
+**服务端 → 客户端：**
+- `full`：完整状态快照（新客户端连接时、每 5 秒、每 100 条增量消息后发送）
+- `delta`：仅包含变更字段（常规更新）
+- `player_selected`：确认手柄切换
 - 所有消息包含 `seq`（递增序列号）和 `timestamp`（毫秒时间戳）
+
+**客户端 → 服务端：**
+- `select_player`：选择要监听的手柄编号
 
 ### 设备映射系统
 
@@ -145,7 +158,7 @@ goroutine: HTTP Server       ← 静态文件 + WebSocket 端点
 
 ### 前端配置系统
 
-`frontend/configs/*.json` 定义了每个手柄的 Canvas 绘制布局（按钮坐标、尺寸、半径）。前端根据后端报告的 `controllerType` 自动加载对应的配置。
+`internal/web/frontend/configs/*.json` 定义了每个手柄的 Canvas 绘制布局（按钮坐标、尺寸、半径）。前端根据后端报告的 `controllerType` 自动加载对应的配置。
 
 ## 依赖
 
@@ -154,27 +167,28 @@ goroutine: HTTP Server       ← 静态文件 + WebSocket 端点
 | `github.com/jupiterrider/purego-sdl3` | 无 CGo 的 SDL3 Go 绑定 |
 | `github.com/gorilla/websocket` | WebSocket 服务端 |
 | `github.com/ebitengine/purego` | 间接依赖，purego-sdl3 的 FFI 基础 |
+| `fyne.io/systray` | Windows 系统托盘集成 |
 
 ## 常见修改
 
 ### 添加新手柄支持
 
-1. `mapping.go`: 在 `knownDevices` map 中添加 VID/PID → DeviceMapping
+1. `internal/gamepad/mapping.go`：在 `knownDevices` map 中添加 VID/PID → DeviceMapping
 2. 如果按键布局与现有映射不同，创建新的 `DeviceMapping` 变量
-3. `frontend/configs/`: 添加新的布局 JSON 文件
-4. `frontend/app.js`: 在 `configMap` 中添加映射名称 → 配置文件名
+3. `internal/web/frontend/configs/`：添加新的布局 JSON 文件
+4. `internal/web/frontend/app.js`：在 `configMap` 中添加映射名称 → 配置文件名
 
 ### 修改 Canvas 渲染
 
-所有绘制逻辑在 `frontend/app.js` 的 `drawController()` 函数及其子函数中。按钮位置和尺寸由 `configs/*.json` 控制，颜色由 `COLORS` 常量控制。
+所有绘制逻辑在 `internal/web/frontend/app.js` 的 `drawController()` 函数及其子函数中。按钮位置和尺寸由 `configs/*.json` 控制，颜色由 `COLORS` 常量控制。
 
 ### 修改轮询频率
 
-`reader.go` 中的 `pollDelayNS` 常量（当前 16ms ≈ 60Hz）。
+`internal/gamepad/reader.go` 中的 `pollDelayNS` 常量（当前 16ms ≈ 60Hz）。
 
 ### 修改死区
 
-`reader.go` 中的 `deadzone` 常量（当前 0.05），以及 `state.go` 中的 `analogThreshold` 常量（当前 0.01，用于增量比较）。
+`internal/gamepad/reader.go` 中的 `deadzone` 常量（当前 0.05），以及 `internal/gamepad/state.go` 中的 `analogThreshold` 常量（当前 0.01，用于增量比较）。
 
 ## 许可证
 

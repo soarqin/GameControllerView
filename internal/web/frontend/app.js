@@ -28,6 +28,13 @@ let bodyAlpha = 1.0;
 // Selected player index (1-based, default 1)
 let selectedPlayerIndex = 1;
 
+// Input Overlay mode: name of the overlay config to load (null = use built-in geometric renderer)
+let overlayName = null;
+// Input Overlay runtime state
+let overlayConfig = null;   // parsed JSON from Input Overlay config file
+let overlayTexture = null;  // HTMLImageElement of the texture atlas
+let overlayReady = false;   // true once both config and texture are loaded
+
 // ============================================================
 // WebSocket Connection
 // ============================================================
@@ -184,12 +191,15 @@ function updateControllerInfo() {
 }
 
 // ============================================================
-// Configuration Loading
+// Configuration Loading (geometric renderer)
 // ============================================================
 
 let loadedConfigType = '';
 
 function loadConfigIfNeeded() {
+    // In Input Overlay mode, skip built-in config loading
+    if (overlayName !== null) return;
+
     const type = state.controllerType || 'xbox';
     if (type === loadedConfigType) return;
 
@@ -223,6 +233,270 @@ function loadConfigIfNeeded() {
                 loadConfigIfNeeded();
             }
         });
+}
+
+// ============================================================
+// Input Overlay: Config + Texture Loading
+// ============================================================
+
+// SDL2 gamepad button codes → GameControllerView state paths
+// Matches layout_constants.h and vc.js from input-overlay
+const IO_BUTTON_CODE_MAP = {
+    0:  s => s.buttons.a,
+    1:  s => s.buttons.b,
+    2:  s => s.buttons.x,
+    3:  s => s.buttons.y,
+    4:  s => s.buttons.back,
+    5:  s => s.buttons.guide,
+    6:  s => s.buttons.start,
+    7:  s => s.sticks.left.pressed,
+    8:  s => s.sticks.right.pressed,
+    9:  s => s.buttons.lb,
+    10: s => s.buttons.rb,
+    11: s => s.dpad.up,
+    12: s => s.dpad.down,
+    13: s => s.dpad.left,
+    14: s => s.dpad.right,
+    15: s => s.buttons.misc,        // Misc1 (e.g. PS5 Mute)
+    20: s => s.buttons.touchpad,
+};
+
+// Get button pressed state by SDL2 code
+function ioButtonPressed(code) {
+    const getter = IO_BUTTON_CODE_MAP[code];
+    return getter ? !!getter(state) : false;
+}
+
+// Load an Input Overlay config: tries external overlays dir first, then embedded
+function loadInputOverlayConfig(name) {
+    overlayReady = false;
+    overlayConfig = null;
+    overlayTexture = null;
+
+    // Candidate URL prefixes in priority order:
+    // 1. /overlays/<name>/  — external directory next to executable (served by backend)
+    // 2. /overlays/<name>/  — embedded under frontend/overlays/ (same path, handled by fallback)
+    const baseUrl = `/overlays/${encodeURIComponent(name)}/`;
+    const jsonUrl = `${baseUrl}${encodeURIComponent(name)}.json`;
+
+    fetch(jsonUrl)
+        .then(r => {
+            if (!r.ok) throw new Error(`HTTP ${r.status}`);
+            return r.json();
+        })
+        .then(cfg => {
+            overlayConfig = cfg;
+            // Derive texture filename: same name as JSON but with .png extension
+            const pngUrl = `${baseUrl}${encodeURIComponent(name)}.png`;
+            const img = new Image();
+            img.onload = () => {
+                overlayTexture = img;
+                overlayReady = true;
+                console.log(`Input Overlay '${name}' loaded (${cfg.overlay_width}x${cfg.overlay_height})`);
+            };
+            img.onerror = () => {
+                console.error(`Failed to load texture: ${pngUrl}`);
+                // Still mark ready so we at least show something (will skip texture draws)
+                overlayReady = true;
+            };
+            img.src = pngUrl;
+        })
+        .catch(err => {
+            console.error(`Failed to load Input Overlay config '${name}': ${err}`);
+        });
+}
+
+// ============================================================
+// Input Overlay: Texture Atlas Renderer
+// ============================================================
+
+// Compute D-pad direction index (0=neutral, 1=left, 2=right, 3=up, 4=down,
+// 5=up-left, 6=up-right, 7=down-left, 8=down-right)
+function ioDpadIndex() {
+    const { up, down, left, right } = state.dpad;
+    if (!up && !down && !left && !right) return 0;
+    if (up && left)  return 5;
+    if (up && right) return 6;
+    if (down && left)  return 7;
+    if (down && right) return 8;
+    if (left)  return 1;
+    if (right) return 2;
+    if (up)    return 3;
+    if (down)  return 4;
+    return 0;
+}
+
+// Draw a single sprite from the texture atlas onto the canvas.
+// (sx, sy, sw, sh) = source region in texture; (dx, dy, dw, dh) = destination on canvas.
+function ioDrawSprite(sx, sy, sw, sh, dx, dy, dw, dh) {
+    if (!overlayTexture || sw <= 0 || sh <= 0 || dw <= 0 || dh <= 0) return;
+    ctx.drawImage(overlayTexture, sx, sy, sw, sh, dx, dy, dw, dh);
+}
+
+// Draw a partially-filled sprite for progressive trigger rendering.
+// fillRatio: 0.0 (empty) … 1.0 (full). direction: 1=up, 2=down, 3=left, 4=right.
+function ioDrawTriggerFill(sx, sy, sw, sh, dx, dy, dw, dh, fillRatio, direction) {
+    if (!overlayTexture || fillRatio <= 0) return;
+
+    ctx.save();
+    // Clip to the fill region on the canvas
+    ctx.beginPath();
+    switch (direction) {
+        case 1: // fill upward (from bottom)
+            ctx.rect(dx, dy + dh * (1 - fillRatio), dw, dh * fillRatio);
+            break;
+        case 2: // fill downward (from top)
+            ctx.rect(dx, dy, dw, dh * fillRatio);
+            break;
+        case 3: // fill leftward (from right)
+            ctx.rect(dx + dw * (1 - fillRatio), dy, dw * fillRatio, dh);
+            break;
+        case 4: // fill rightward (from left)
+            ctx.rect(dx, dy, dw * fillRatio, dh);
+            break;
+        default:
+            ctx.rect(dx, dy, dw, dh * fillRatio);
+    }
+    ctx.clip();
+    ctx.drawImage(overlayTexture, sx, sy, sw, sh, dx, dy, dw, dh);
+    ctx.restore();
+}
+
+// Main Input Overlay draw function
+function drawInputOverlay() {
+    if (!overlayConfig) {
+        if (!simpleMode) drawDisconnected();
+        return;
+    }
+    if (!overlayReady) return; // still loading
+
+    const cfg = overlayConfig;
+    const ow = cfg.overlay_width  || 1280;
+    const oh = cfg.overlay_height || 720;
+
+    // Compute uniform scale to fit overlay into canvas, centered
+    const scaleX = W / ow;
+    const scaleY = H / oh;
+    const scale  = Math.min(scaleX, scaleY);
+    const offX   = (W - ow * scale) / 2;
+    const offY   = (H - oh * scale) / 2;
+
+    // Helper: map overlay coordinates to canvas coordinates
+    const ox = (x, w) => offX + x * scale;
+    const oy = (y, h) => offY + y * scale;
+    const ow2 = w => w * scale;
+    const oh2 = h => h * scale;
+
+    // Sort elements by z_level (ascending), stable sort
+    const elements = [...(cfg.elements || [])].sort((a, b) => {
+        const za = Number(a.z_level) || 0;
+        const zb = Number(b.z_level) || 0;
+        return za - zb;
+    });
+
+    const BORDER = 3; // CFG_INNER_BORDER between sprite states
+
+    for (const el of elements) {
+        const type = el.type;
+        if (!el.mapping || el.mapping.length < 4) continue;
+
+        const [mu, mv, mw, mh] = el.mapping;
+        const [px, py] = el.pos || [0, 0];
+
+        // Destination rectangle on canvas
+        const dx = ox(px);
+        const dy = oy(py);
+        const dw = ow2(mw);
+        const dh = oh2(mh);
+
+        switch (type) {
+            case 0: {
+                // Static texture element (e.g. controller body background).
+                // Always render, even in simple mode — the controller outline is part
+                // of the texture atlas, not the page/canvas background color.
+                ioDrawSprite(mu, mv, mw, mh, dx, dy, dw, dh);
+                break;
+            }
+
+            case 2: {
+                // Gamepad button (digital)
+                const pressed = ioButtonPressed(el.code);
+                const su = mu;
+                const sv = pressed ? mv + mh + BORDER : mv;
+                ioDrawSprite(su, sv, mw, mh, dx, dy, dw, dh);
+                break;
+            }
+
+            case 5: {
+                // Analog stick
+                const side = el.side === 1 ? 'right' : 'left';
+                const stickState = state.sticks[side];
+                const radius = (el.stick_radius || 40) * scale;
+
+                // Knob offset in canvas pixels
+                const kx = stickState.position.x * radius;
+                const ky = -stickState.position.y * radius; // Y inverted
+
+                // Pressed state: use second sprite (offset vertically by mh + BORDER)
+                const sv = stickState.pressed ? mv + mh + BORDER : mv;
+                ioDrawSprite(mu, sv, mw, mh, dx + kx, dy + ky, dw, dh);
+                break;
+            }
+
+            case 6: {
+                // Trigger (analog or button mode)
+                const side = el.side === 1 ? 'rt' : 'lt';
+                const value = state.triggers[side].value; // 0.0 … 1.0
+                const triggerMode = el.trigger_mode === true;
+                const direction = el.direction || 1;
+
+                if (triggerMode) {
+                    // Binary button mode
+                    const pressed = value > 0.1;
+                    const sv = pressed ? mv + mh + BORDER : mv;
+                    ioDrawSprite(mu, sv, mw, mh, dx, dy, dw, dh);
+                } else {
+                    // Progressive fill mode: draw base sprite, then overlay fill
+                    ioDrawSprite(mu, mv, mw, mh, dx, dy, dw, dh);
+                    if (value > 0) {
+                        const pressedV = mv + mh + BORDER;
+                        ioDrawTriggerFill(mu, pressedV, mw, mh, dx, dy, dw, dh, value, direction);
+                    }
+                }
+                break;
+            }
+
+            case 7: {
+                // Gamepad player ID / guide button indicator
+                // Sprite sheet: 5 states horizontally (player 1-4, guide pressed)
+                // Draw the guide-pressed sprite behind the player sprite when guide is held
+                const playerIdx = Math.min(Math.max((selectedPlayerIndex || 1) - 1, 0), 3);
+                const guidePressed = !!state.buttons.guide;
+                if (guidePressed) {
+                    // Guide pressed = sprite index 4
+                    const gsx = mu + 4 * (mw + BORDER);
+                    ioDrawSprite(gsx, mv, mw, mh, dx, dy, dw, dh);
+                }
+                // Player number sprite
+                const psx = mu + playerIdx * (mw + BORDER);
+                ioDrawSprite(psx, mv, mw, mh, dx, dy, dw, dh);
+                break;
+            }
+
+            case 8: {
+                // Composite D-pad (9 direction sprites arranged horizontally)
+                const dpadIdx = ioDpadIndex();
+                const dsx = mu + dpadIdx * (mw + BORDER);
+                ioDrawSprite(dsx, mv, mw, mh, dx, dy, dw, dh);
+                break;
+            }
+
+            // Types 1 (keyboard), 3 (mouse button), 4 (wheel), 9 (mouse movement):
+            // Not relevant for gamepad display — skip silently.
+            default:
+                break;
+        }
+    }
 }
 
 // ============================================================
@@ -310,12 +584,22 @@ function resolveLabelConfig(posLabelConfig, defaultLabelConfig, defaults) {
 function render() {
     ctx.clearRect(0, 0, W, H);
 
-    if (!state.connected) {
-        if (!simpleMode) {
-            drawDisconnected();
+    if (overlayName !== null) {
+        // Input Overlay rendering mode
+        if (!state.connected) {
+            if (!simpleMode) drawDisconnected();
+        } else {
+            drawInputOverlay();
         }
     } else {
-        drawController();
+        // Built-in geometric rendering mode
+        if (!state.connected) {
+            if (!simpleMode) {
+                drawDisconnected();
+            }
+        } else {
+            drawController();
+        }
     }
 
     requestAnimationFrame(render);
@@ -878,6 +1162,13 @@ function init() {
         }
     }
 
+    // Parse overlay parameter: enables Input Overlay rendering mode
+    const overlayParam = urlParams.get('overlay');
+    if (overlayParam) {
+        overlayName = overlayParam;
+        loadInputOverlayConfig(overlayName);
+    }
+
     // Apply simple mode styles
     if (simpleMode) {
         document.body.style.backgroundColor = 'transparent';
@@ -899,15 +1190,17 @@ function init() {
     setupCanvas();
     window.addEventListener('resize', setupCanvas);
 
-    // Load xbox config as default
-    fetch('configs/xbox.json')
-        .then(r => r.json())
-        .then(config => {
-            configCache['xbox'] = config;
-            currentConfig = config;
-            loadedConfigType = 'xbox';
-        })
-        .catch(e => console.error('Failed to load default config:', e));
+    // Load xbox config as default (only used when not in Input Overlay mode)
+    if (overlayName === null) {
+        fetch('configs/xbox.json')
+            .then(r => r.json())
+            .then(config => {
+                configCache['xbox'] = config;
+                currentConfig = config;
+                loadedConfigType = 'xbox';
+            })
+            .catch(e => console.error('Failed to load default config:', e));
+    }
 
     connectWebSocket();
     requestAnimationFrame(render);

@@ -9,6 +9,7 @@ A real-time game controller visualization tool that reads gamepad input via SDL3
 - **Multi-Controller Support**: Pre-configured layouts for Xbox, PlayStation, Switch Pro controllers
 - **Generic Fallback**: Automatic detection for unknown controllers
 - **Zero-Config Binary**: Single executable with embedded frontend assets
+- **Input Overlay Support**: Texture-atlas based rendering using [Input Overlay](https://github.com/univrsal/input-overlay) preset format (`?overlay=<name>`)
 
 ## Requirements
 
@@ -42,6 +43,7 @@ The frontend supports the following URL parameters to customize the display:
 | `p` | Player index (1-based) to select which controller to display. Defaults to `1` (first connected controller). | `?p=2` for the second controller |
 | `simple` | Enable simple mode with transparent background and no UI elements. Set to `1` to enable. | `?simple=1` |
 | `alpha` | Controller body transparency (0.0 to 1.0). Lower values make the body more transparent. | `?alpha=0.5` |
+| `overlay` | Input Overlay preset name. Enables texture-atlas renderer instead of the built-in geometric renderer. | `?overlay=dualsense` |
 
 ### Examples
 
@@ -60,6 +62,12 @@ http://localhost:8080/?alpha=0.5
 
 # Combine multiple parameters
 http://localhost:8080/?p=2&simple=1&alpha=0.3
+
+# Use an Input Overlay preset (place files in overlays/dualsense/ next to the exe)
+http://localhost:8080/?overlay=dualsense
+
+# Input Overlay preset with player 2, simple mode
+http://localhost:8080/?overlay=dualsense&p=2&simple=1
 ```
 
 ### Multi-Controller Setup
@@ -79,6 +87,9 @@ GameControllerView/
 ├── go.mod                              # module github.com/soar/gamecontrollerview
 ├── go.sum
 ├── build.bat                           # Windows GUI-mode build script
+├── docs/
+│   ├── input-overlay-format.md        # Input Overlay config format specification
+│   └── third-party-licenses.md        # Third-party license notices
 ├── cmd/
 │   └── gamecontrollerview/
 │       ├── main.go                     # Entry point: component assembly, signal handling
@@ -111,6 +122,32 @@ GameControllerView/
                 ├── playstation.json
                 ├── playstation5.json
                 └── switch_pro.json
+```
+
+### Input Overlay Presets (external, not included)
+
+Input Overlay presets (`.json` + `.png` texture atlas pairs) are placed in an `overlays/` directory **next to the executable** at runtime. They are **not** embedded in the binary and **not** distributed with GameControllerView releases.
+
+```
+overlays/              ← place next to GameControllerView.exe
+├── dualsense/
+│   ├── dualsense.json
+│   └── dualsense.png
+└── xbox-one-controller/
+    ├── xbox-one-controller.json
+    └── xbox-one-controller.png
+```
+
+Presets from the [Input Overlay project](https://github.com/univrsal/input-overlay/tree/master/presets) are licensed under **GPL-2.0** and must not be bundled with GameControllerView distributions. See [docs/third-party-licenses.md](docs/third-party-licenses.md) for details.
+
+### Converting GamepadViewer Skins
+
+The included `gpvskin2overlay` tool converts [GamepadViewer](https://gamepadviewer.com/) CSS skins into Input Overlay format. See **[docs/gpvskin2overlay.md](docs/gpvskin2overlay.md)** for build and usage instructions.
+
+```bash
+go build -o gpvskin2overlay.exe ./cmd/gpvskin2overlay
+gpvskin2overlay -skin xbox -out overlays/gpv-xbox
+# Then open: http://localhost:8080/?overlay=gpv-xbox
 ```
 
 ## Architecture
@@ -190,9 +227,23 @@ The `pollDelayNS` constant in `internal/gamepad/reader.go` (currently 16ms ≈ 6
 
 The `deadzone` constant in `internal/gamepad/reader.go` (currently 0.05), and the `analogThreshold` constant in `internal/gamepad/state.go` (currently 0.01, used for delta comparison).
 
+## Input Overlay Format
+
+See [docs/input-overlay-format.md](docs/input-overlay-format.md) for the full config format specification, including all element types, sprite layout conventions, and instructions for creating custom presets.
+
+## GPV Skin Converter
+
+See [docs/gpvskin2overlay.md](docs/gpvskin2overlay.md) for build and usage instructions for the `gpvskin2overlay` tool, which converts GamepadViewer CSS skins into Input Overlay format.
+
 ## License
 
-MIT License
+MIT License — see [LICENSE](LICENSE)
+
+### Third-Party
+
+Input Overlay preset files (`.json` / `.png`) are licensed under **GPL-2.0**. They are **not** included in this repository or in GameControllerView releases. See [docs/third-party-licenses.md](docs/third-party-licenses.md).
+
+> **Packaging notice**: Do **NOT** bundle `overlays/` preset files when distributing GameControllerView. Distributing GPL-2.0 files alongside MIT-licensed software without GPL compliance is a license violation.
 
 ## Contributing
 

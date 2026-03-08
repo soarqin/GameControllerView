@@ -6,6 +6,7 @@ import (
 	"net/http"
 	"os"
 	"os/signal"
+	"path/filepath"
 	"runtime"
 	"syscall"
 	"time"
@@ -62,8 +63,17 @@ func main() {
 	broadcaster := hub.NewBroadcaster(h, reader.Changes())
 	go broadcaster.Run()
 
+	// Determine the directory containing this executable.
+	// Used for locating the external overlays/ directory next to the binary.
+	appExeDir := "."
+	if exe, err := os.Executable(); err == nil {
+		appExeDir = filepath.Dir(exe)
+	} else {
+		log.Printf("Warning: could not determine executable path: %v", err)
+	}
+
 	// Create and start HTTP server
-	srv := server.New(h, broadcaster, reader, web.FrontendFS(), ":8080")
+	srv := server.New(h, broadcaster, reader, web.FrontendFS(), appExeDir, ":8080")
 	serverErrCh := make(chan error, 1)
 	go func() {
 		if err := srv.ListenAndServe(); err != nil && err != http.ErrServerClosed {

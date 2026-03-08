@@ -26,14 +26,7 @@ Requires **SDL3.dll** (>= 3.2.0) in the same directory as the executable or in s
 | `p` | Gamepad number (1-based, default 1) | `?p=2` |
 | `simple` | Simple mode (transparent background, no UI) | `?simple=1` |
 | `alpha` | Gamepad opacity (0.0-1.0) | `?alpha=0.5` |
-
-Multiple gamepad viewing example:
-```bash
-# First gamepad
-http://localhost:8080/?p=1
-# Second gamepad
-http://localhost:8080/?p=2
-```
+| `overlay` | Input Overlay config name (enables texture-atlas renderer) | `?overlay=dualsense` |
 
 ## Project Structure
 
@@ -42,11 +35,17 @@ GameControllerView/
 ├── go.mod                              # module github.com/soar/gamecontrollerview
 ├── go.sum
 ├── build.bat                           # Windows GUI-mode build script
+├── docs/
+│   ├── input-overlay-format.md        # Input Overlay config format specification
+│   ├── gpvskin2overlay.md             # GPV skin converter build & usage guide
+│   └── third-party-licenses.md        # Third-party license notices (GPL-2.0 presets)
 ├── cmd/
-│   └── gamecontrollerview/
-│       ├── main.go                     # Entry: component assembly, signal handling
-│       ├── winres/                     # Windows resource definitions (icon, manifest)
-│       └── rsrc_windows_amd64.syso     # Compiled Windows resource object
+│   ├── gamecontrollerview/
+│   │   ├── main.go                     # Entry: component assembly, signal handling
+│   │   ├── winres/                     # Windows resource definitions (icon, manifest)
+│   │   └── rsrc_windows_amd64.syso     # Compiled Windows resource object
+│   └── gpvskin2overlay/
+│       └── main.go                     # CLI tool: convert GPV CSS skin → Input Overlay format
 └── internal/
     ├── console/
     │   ├── console_windows.go          # Windows console detection & Ctrl+C handler (reusable)
@@ -62,11 +61,19 @@ GameControllerView/
     │   ├── broadcast.go                # State change → targeted JSON broadcast
     │   └── message.go                  # WSMessage type definitions
     ├── server/
-    │   ├── server.go                   # HTTP server, graceful shutdown
+    │   ├── server.go                   # HTTP server, graceful shutdown; mounts external overlays/ dir
     │   └── handler.go                  # WebSocket upgrade, client message handling
     ├── tray/
     │   ├── tray.go                     # Windows system tray integration (atomic shutdown flag, non-blocking menu handling)
     │   └── icon.go                     # Embedded tray icon
+    ├── gpvskin/
+    │   ├── skinmodel.go                # Data types: IOElementType, CSSProperties, SkinElement, etc.
+    │   ├── cssparser.go                # CSS loading (HTTP + local), comment stripping, rule parsing
+    │   ├── skins.go                    # All 9 GPV skin definitions + CustomSkinDef registry
+    │   ├── mapping.go                  # CSS selector resolution + position calculation per element
+    │   ├── download.go                 # Image download + SVG/SVGZ→PNG rasterization (rsvg-convert/inkscape)
+    │   ├── atlas.go                    # Sprite cropping + IO-convention atlas packing
+    │   └── generate.go                 # Input Overlay JSON generation + high-level Convert() pipeline
     └── web/
         ├── embed.go                    # go:embed embeds frontend/ static files, exports FrontendFS()
         └── frontend/                   # Frontend static files
@@ -79,6 +86,9 @@ GameControllerView/
                 ├── playstation5.json
                 └── switch_pro.json
 ```
+
+Input Overlay presets are **external only** — place them in an `overlays/` directory next to the executable.
+The server mounts this directory at `/overlays/`. Presets are **not** embedded in the binary (GPL-2.0 license conflict).
 
 ## Architecture Highlights
 
@@ -112,46 +122,6 @@ goroutine: HTTP Server         ← Static files + WebSocket endpoint, graceful s
   - **Console-mode build + double-click**: Frees auto-created console (GUI mode)
   - **GUI-mode build + terminal**: Creates independent console window + redirects stdout/stderr/stdin
   - **GUI-mode build + double-click**: No console (pure GUI mode)
-  - Console mode shows "Press Ctrl+C or Ctrl+Break to exit" message
-  - GUI mode hides console window, uses system tray for exit
-- Cancels context to stop reader
-- Waits for reader to complete cleanup
-- Gracefully shuts down HTTP server (5 second timeout)
-
-### Console Package (Reusable Component)
-
-The `internal/console` package provides cross-platform console detection and Windows Ctrl+C handling that can be reused in other projects:
-
-```go
-import "github.com/soar/gamecontrollerview/internal/console"
-
-// Detect if running from console or GUI mode
-if console.IsRunningFromConsole() {
-    // Console mode
-} else {
-    // GUI mode
-}
-
-// Set up Windows console handler (works with SDL3, LockOSThread, etc.)
-shutdownChan := make(chan struct{})
-registerHandler := console.SetupConsoleHandler(shutdownChan)
-
-// Re-register after library initialization (e.g., SDL init)
-registerHandler()
-
-// Wait for shutdown
-<-shutdownChan
-```
-
-**Key Features:**
-- Platform-independent: On non-Windows platforms, `SetupConsoleHandler` returns a no-op function
-- Smart console allocation: Handles both console-mode and GUI-mode builds correctly
-  - Console-mode builds: Frees auto-created console when double-clicked
-  - GUI-mode builds: Creates independent console window when launched from terminal (prevents input/output confusion)
-- Automatically detects launch method (terminal vs double-click) via parent process check
-- Std stream redirection: After console allocation, updates `os.Stdout`, `os.Stderr`, `os.Stdin`, and `log` output
-- Re-registration support for libraries that override console handlers during initialization
-- Safe for rapid Ctrl+C presses (atomic operations prevent duplicate channel close)
 
 ### Multi-Gamepad Support
 
@@ -216,66 +186,78 @@ Intentionally uses SDL3 Joystick low-level API instead of Gamepad high-level API
 
 Gamepad body outlines are defined in the `body` section of each config file. The system supports two rendering methods:
 
-**1. SVG Path (Recommended)** - Realistic controller outlines
-Add a `path` property with SVG path data:
-```json
-{
-  "body": {
-    "path": "M 30 40 L 470 40 Q 490 40 490 60..."
-  }
-}
-```
-
-**With viewBox (Recommended for imported SVG paths)**
-When importing paths from actual SVG files, add `viewBox` to define the coordinate system:
+**1. SVG Path (Recommended)** — with optional `viewBox` for automatic coordinate scaling:
 ```json
 {
   "body": {
     "path": "M60.3 48.3c-6.8 1.9...",
     "viewBox": "0 0 256 256",
-    "x": 10,
-    "y": 40,
-    "width": 480,
-    "height": 280
+    "x": 10, "y": 40, "width": 480, "height": 280
   }
 }
 ```
-The `viewBox` property ("min-x min-y width height") defines the SVG coordinate system. The renderer will automatically scale and center the path to fit within the body's `x`, `y`, `width`, `height` boundaries while preserving aspect ratio.
 
-**2. Rounded Rectangle (Legacy)** - Simple shapes
-Uses `x`, `y`, `width`, `height`, `radius` for basic rounded rectangles:
+**2. Rounded Rectangle (Legacy)**:
 ```json
 {
-  "body": {
-    "x": 10, "y": 40, "width": 480, "height": 280, "radius": 40
-  }
+  "body": { "x": 10, "y": 40, "width": 480, "height": 280, "radius": 40 }
 }
 ```
 
-**SVG Path Guidelines:**
-- Canvas size: 500x330 pixels
-- Origin: top-left corner (0,0)
-- Use standard SVG path commands: M (move), L (line), Q (quadratic curve), C (cubic curve), Z (close)
-- Keep paths simple (outline only, no textures or gradients)
-- Ensure path is closed (ends with Z)
-- When importing from SVG files, always include the original viewBox
-- Use `viewBox` for automatic scaling - simpler than manually converting coordinates
-- Test paths by temporarily adding to config and refreshing browser
+### System Tray (Windows GUI Mode)
 
-**Common Path Command Reference:**
-- `M x y` - Move to starting point
-- `L x y` - Line to point
-- `Q cx cy x y` - Quadratic Bézier curve to (x,y) with control point (cx,cy)
-- `C cx1 cy1 cx2 cy2 x y` - Cubic Bézier curve (two control points)
-- `Z` - Close path
+The system tray provides menu access when running in GUI mode (double-clicked executable). Key points:
+- **Non-blocking menu handling**: Menu clicks processed in a dedicated goroutine to prevent Windows message loop deadlocks
+- **Atomic shutdown flag**: Prevents duplicate shutdown requests and race conditions
 
-**Importing SVG Files:**
-To import a controller shape from an existing SVG file:
-1. Open the SVG file and locate the `<path>` element
-2. Copy the `d` attribute value to the `path` property
-3. Copy the root SVG's `viewBox` attribute to the `viewBox` property
-4. Set `x`, `y`, `width`, `height` to position and scale on the canvas
-5. The renderer will handle coordinate transformation automatically
+### Input Overlay Rendering
+
+Two rendering engines coexist in `app.js`, selected by the `?overlay=` URL parameter:
+
+| Mode | Renderer |
+|------|----------|
+| Built-in geometric | Canvas shapes (SVG path / rounded rects) |
+| Input Overlay (`?overlay=<name>`) | Texture atlas (PNG sprite sheet) |
+
+**Supported element types:** texture (0), gamepad_button (2), analog_stick (5), trigger (6), gamepad_id (7), dpad (8)
+
+**Simple mode** (`?simple=1`): makes the page background transparent. In Input Overlay mode, type=0 static texture elements (controller body) are always rendered — the controller outline is part of the atlas, not the page background.
+
+Presets are served from `overlays/<name>/` next to the executable (mounted at `/overlays/`). See [docs/input-overlay-format.md](docs/input-overlay-format.md) for full format specification.
+
+## GPV Skin → Input Overlay Converter
+
+`cmd/gpvskin2overlay` converts [GamepadViewer](https://gamepadviewer.com/) CSS skins into Input Overlay format. See **[docs/gpvskin2overlay.md](docs/gpvskin2overlay.md)** for full build and usage instructions.
+
+### Internal Package (`internal/gpvskin`)
+
+| File | Purpose |
+|------|---------|
+| `skinmodel.go` | Data types: `IOElementType`, `CSSProperties`, `SkinElement`, etc. |
+| `cssparser.go` | CSS loading (HTTP + local), comment stripping, rule/property parsing |
+| `skins.go` | All 9 GPV skin definitions + `CustomSkinDef` registry |
+| `mapping.go` | CSS selector resolution + absolute position calculation per element |
+| `download.go` | Image download + SVG/SVGZ→PNG rasterization (rsvg-convert/inkscape) |
+| `atlas.go` | Sprite cropping + IO-convention atlas packing |
+| `generate.go` | Input Overlay JSON generation + high-level `Convert()` pipeline |
+
+### Key Implementation Details
+
+**CSS selector matching**: `Lookup()` merges all matching CSS rules in file order. Later rules override earlier ones. Exception: a `background` value without `url()` will not overwrite an existing URL value (prevents `.xbox { background: no-repeat center }` from erasing the background image).
+
+**Positive `background-position` values**: GPV sometimes uses positive background-position (e.g. `48px 0` for the Y button). In CSS this shifts the image right, meaning the crop starts at a negative coordinate. In `atlas.go`, negative cropX/cropY are corrected as `cropX = imageWidth + cropX`.
+
+**Sub-container DOM layout**: GPV's DOM nests elements inside intermediate containers (`.triggers`, `.bumpers`, `.arrows`, `.abxy`, `.sticks`, `.dpad`). `mapping.go` resolves each container's absolute position first, then computes element positions within.
+
+**PressedOpacity atlas layout**: Most GPV skins use `opacity:0` for normal state and `opacity:1` for pressed state. Atlas layout:
+- frame0 (at `[u, v, w, h]`): transparent
+- frame1 (at `[u, v+h+3, w, h]`): the actual sprite
+
+All dpad directions and triggers use `PressedOpacity`. All triggers use `trigger_mode: false` (progressive fill). NES dpad uses `PressedSprite` (sprite-based pressed state).
+
+**Guide/Home button**: GPV cannot detect the guide button via browser APIs. The `.meta` element is not mapped in any skin.
+
+**SVGZ support**: `isSVG()` recognizes both `.svg` and `.svgz`. `rasterizeSVG()` checks the gzip magic bytes (`0x1f 0x8b`) before attempting decompression — some servers return plain SVG with a `.svgz` extension.
 
 ## Common Modification Guide
 
@@ -290,11 +272,6 @@ To import a controller shape from an existing SVG file:
 
 All drawing logic is in `internal/web/frontend/app.js` in `drawController()` and its sub-functions. Button positions and sizes are controlled by `configs/*.json`, colors by `COLORS` constants.
 
-### Adding New URL Parameters
-
-1. `internal/web/frontend/app.js`: Parse URL parameters in `init()`
-2. Adjust rendering behavior based on parameters (e.g., `simpleMode`, `bodyAlpha`)
-
 ### Modifying Poll Frequency
 
 `pollDelayNS` constant in `internal/gamepad/reader.go` (currently 16ms ≈ 60Hz).
@@ -302,88 +279,6 @@ All drawing logic is in `internal/web/frontend/app.js` in `drawController()` and
 ### Modifying Deadzone
 
 `deadzone` constant in `internal/gamepad/reader.go` (currently 0.05), `analogThreshold` constant in `internal/gamepad/state.go` (currently 0.01, used for delta comparison).
-
-### Using SDL Initialization Callback (Platform-Specific Setup)
-
-The `Reader` supports an optional callback that is invoked after SDL initialization completes. This is useful for platform-specific setup that must happen after SDL is initialized (e.g., re-registering Windows console handlers).
-
-```go
-reader := gamepad.NewReader()
-reader.SetOnSDLInitCallback(func() {
-    // Platform-specific setup after SDL initialization
-    // Only called if runtime.GOOS matches the platform check
-})
-```
-
-### Using Console Package in Other Projects
-
-The `internal/console` package is designed to be reusable across projects. To use it in your own project:
-
-1. Copy the `internal/console` directory to your project
-2. Import and use the functions:
-
-```go
-import "yourproject/internal/console"
-
-func main() {
-    // Detect console mode
-    if console.IsRunningFromConsole() {
-        fmt.Println("Running from terminal - press Ctrl+C to exit")
-    } else {
-        // GUI mode - hide console, show tray icon, etc.
-    }
-
-    // Set up Windows console handler (important for SDL3, LockOSThread, etc.)
-    shutdownChan := make(chan struct{})
-    registerHandler := console.SetupConsoleHandler(shutdownChan)
-
-    // If using libraries that override console handlers, re-register after init
-    // e.g., after sdl.Init()
-    registerHandler()
-
-    // Wait for shutdown
-    <-shutdownChan
-    cleanup()
-}
-```
-
-**Why use this package:**
-- Fixes Ctrl+C not working with SDL3, OpenGL, or other libraries using `runtime.LockOSThread()`
-- Smart console allocation handles both console-mode and GUI-mode builds:
-  - Console-mode builds: Frees auto-created console when double-clicked
-  - GUI-mode builds: Allocates console when launched from terminal
-- Automatically detects launch method (terminal vs double-click) via parent process check
-- Cross-platform: gracefully degrades to no-op on non-Windows platforms
-- Production-tested: handles edge cases like rapid Ctrl+C presses
-
-**Build Mode Examples:**
-```bash
-# Console-mode build (default)
-go build -o myapp.exe ./cmd/gamecontrollerview
-# - From terminal: shows console output
-# - Double-clicked: hides console window (GUI mode)
-
-# GUI-mode build (no console window by default)
-go build -ldflags "-H windowsgui" -o myapp.exe ./cmd/gamecontrollerview
-# - From terminal: creates new console window + redirects stdout/stderr/stdin
-# - Double-clicked: no console (pure GUI)
-```
-
-### System Tray (Windows GUI Mode)
-
-The system tray provides menu access when running in GUI mode (double-clicked executable).
-
-**Key Features:**
-- **Non-blocking menu handling**: Menu clicks are processed in a dedicated goroutine to prevent Windows message loop deadlocks
-- **Atomic shutdown flag**: Prevents duplicate shutdown requests and race conditions
-- **Click deduplication**: Uses `atomic.Bool` to prevent multiple rapid clicks from causing issues
-- **Graceful exit**: Ensures shutdown function completes before quitting systray
-
-**Why tray can freeze:**
-The `fyne.io/systray` library uses Windows message loops internally. If menu click handlers block or take too long, the Windows message queue can fill up, causing the tray to become unresponsive. The fix:
-1. Move all event handling to a separate goroutine
-2. Use atomic operations for state management
-3. Avoid blocking operations in click handlers
 
 ## Dependencies
 
@@ -394,65 +289,3 @@ The `fyne.io/systray` library uses Windows message loops internally. If menu cli
 | `github.com/ebitengine/purego` | Transitive dependency, FFI base for purego-sdl3 |
 | `fyne.io/systray` | Windows system tray integration |
 | `github.com/godbus/dbus/v5` | Transitive (via systray, Linux only) |
-
-## Code Refactoring (2026-03-01)
-
-Major refactoring and code simplification completed:
-
-### Dead Code Removal
-- Deleted unused `NewEventMessage()` function and `WSMessage.Event` field
-- Deleted unused `Client.ReadPump()` method (only `ReadPumpWithHandler` is used)
-- Deleted unused `Hub.Broadcast()` method and corresponding `case` in `Hub.Run()`
-- Deleted no-op `Reader.Close()` method
-- Deleted unused `Reader.CurrentState()` method
-- Removed duplicate VID/PID entry `{0x146b, 0x0d10}` in mapping table
-
-### API Cleanup
-- Removed unused `broadcaster` parameter from `Client.ReadPumpWithHandler()`
-
-### File Splitting
-- **`hub/hub.go`** split into:
-  - `hub/hub.go` - Hub type (client management, broadcast, run loop)
-  - `hub/client.go` - Client type (WebSocket connection, read/write pumps)
-- **`gamepad/mapping.go`** split into:
-  - `gamepad/mapping.go` - Mapping types and utility functions
-  - `gamepad/mapping_table.go` - VID/PID mapping data table (~550 entries)
-
-### Type Safety
-- Defined `PlayerSwitcher` interface in `hub/client.go` to replace anonymous `interface{}` parameter
-- Unexported `console.processEntry32` struct (was `PROCESSENTRY32`) - internal use only
-- Unexported `gamepad.normalizeAxis`, `normalizeTrigger`, `applyDeadzone` functions - internal use only
-
-### Mutex Pattern Fix
-- Fixed dangerous unlock-relock pattern in `Reader.SetActiveByPlayerIndex()`
-- Now uses explicit `Unlock()` before `emitState()`, eliminating risk of unlock panic
-
-### Frontend Code Quality
-- Extracted `drawDpadDirection()` helper function - reduced `drawDpad()` from 96 to 20 lines
-- Added `resolveLabelConfig()` helper for consistent label configuration resolution
-- Updated all button drawing functions to use the shared helper
-- Extracted `mergeState()` helper to unify `applyFullState()` and `applyDelta()` - eliminated ~40 lines of duplicated state merge logic
-
-### Code Deduplication
-- **PlayStation mappings**: Extracted shared `playStationAxes` and `playStationBaseButtons` arrays, created `newPlayStationMapping()` factory function - PS3/PS5 mappings now differ only by single extra button
-- **Console package**: Split into `console_windows.go` (Windows-specific implementation with `//go:build windows`) and `console_other.go` (stub for non-Windows platforms) - removed runtime `runtime.GOOS` checks
-
-### Build Verification
-All changes compiled successfully with `go build .`. No functional changes to the public API or user-facing behavior.
-
-## Directory Restructure (2026-03-03)
-
-Project restructured to standard Go layout:
-
-### Changes
-- **Module path**: `github.com/soar/GameControllerView/backend` → `github.com/soar/gamecontrollerview` (lowercase, no `/backend` suffix)
-- **`go.mod` / `go.sum`**: Moved from `backend/` to project root
-- **Entry point**: `backend/main.go` + `backend/embed.go` → `cmd/gamecontrollerview/main.go`
-- **Internal packages**: `backend/internal/` → `internal/`
-- **Frontend embed**: Extracted into dedicated `internal/web/` package
-  - `backend/frontend/` → `internal/web/frontend/`
-  - New `internal/web/embed.go` exports `FrontendFS() fs.FS` function
-  - `main.go` calls `web.FrontendFS()` and passes result to `server.New()`
-- **Windows resources**: `backend/winres/` + `backend/rsrc_windows_amd64.syso` → `cmd/gamecontrollerview/winres/` + `cmd/gamecontrollerview/rsrc_windows_amd64.syso`
-- **`build.bat`**: Updated to `go build -ldflags "..." -o GameControllerView.exe ./cmd/gamecontrollerview` (no more `pushd backend`)
-- **`backend/` directory**: Removed entirely

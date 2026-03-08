@@ -9,6 +9,7 @@
 - **多手柄支持**：预配置 Xbox、PlayStation、Switch Pro 手柄布局
 - **通用降级方案**：自动检测未知手柄
 - **零配置二进制**：单文件可执行程序，内置前端资源
+- **Input Overlay 支持**：通过 `?overlay=<名称>` 参数启用基于纹理图集的渲染，兼容 [Input Overlay](https://github.com/univrsal/input-overlay) 预设格式
 
 ## 环境要求
 
@@ -42,6 +43,7 @@ go run ./cmd/gamecontrollerview
 | `p` | 手柄编号（1-based），选择要显示的手柄。默认为 `1`（第一个连接的手柄） | `?p=2` 显示第二个手柄 |
 | `simple` | 启用简单模式，透明背景且无 UI 元素。设置为 `1` 启用 | `?simple=1` |
 | `alpha` | 手柄主体透明度（0.0 到 1.0）。值越小越透明 | `?alpha=0.5` |
+| `overlay` | Input Overlay 预设名称。启用纹理图集渲染器，替代内置几何渲染器 | `?overlay=dualsense` |
 
 ### 使用示例
 
@@ -60,6 +62,12 @@ http://localhost:8080/?alpha=0.5
 
 # 组合多个参数
 http://localhost:8080/?p=2&simple=1&alpha=0.3
+
+# 使用 Input Overlay 预设（需将预设文件放到可执行文件旁的 overlays/dualsense/ 目录）
+http://localhost:8080/?overlay=dualsense
+
+# Input Overlay 预设 + 第二个手柄 + 简单模式
+http://localhost:8080/?overlay=dualsense&p=2&simple=1
 ```
 
 ### 多手柄设置
@@ -79,6 +87,9 @@ GameControllerView/
 ├── go.mod                              # module github.com/soar/gamecontrollerview
 ├── go.sum
 ├── build.bat                           # Windows GUI 模式构建脚本
+├── docs/
+│   ├── input-overlay-format.md        # Input Overlay 配置格式规范
+│   └── third-party-licenses.md        # 第三方许可证说明
 ├── cmd/
 │   └── gamecontrollerview/
 │       ├── main.go                     # 入口：组件组装，信号处理
@@ -111,6 +122,32 @@ GameControllerView/
                 ├── playstation.json
                 ├── playstation5.json
                 └── switch_pro.json
+```
+
+### Input Overlay 预设（外置，不随程序分发）
+
+Input Overlay 预设文件（`.json` + `.png` 纹理图集）在运行时放置于可执行文件旁的 `overlays/` 目录，**不**嵌入二进制文件，**不**随 GameControllerView 发布包分发。
+
+```
+overlays/              ← 放置在 GameControllerView.exe 旁边
+├── dualsense/
+│   ├── dualsense.json
+│   └── dualsense.png
+└── xbox-one-controller/
+    ├── xbox-one-controller.json
+    └── xbox-one-controller.png
+```
+
+可从 [Input Overlay 项目](https://github.com/univrsal/input-overlay/tree/master/presets) 获取预设文件。这些文件采用 **GPL-2.0** 协议授权，**禁止**随 GameControllerView 打包分发。详见 [docs/third-party-licenses.md](docs/third-party-licenses.md)。
+
+### 转换 GamepadViewer 皮肤
+
+内置的 `gpvskin2overlay` 工具可将 [GamepadViewer](https://gamepadviewer.com/) CSS 皮肤转换为 Input Overlay 格式。完整的编译和使用说明请参阅 **[docs/gpvskin2overlay.md](docs/gpvskin2overlay.md)**。
+
+```bash
+go build -o gpvskin2overlay.exe ./cmd/gpvskin2overlay
+gpvskin2overlay -skin xbox -out overlays/gpv-xbox
+# 然后在浏览器访问：http://localhost:8080/?overlay=gpv-xbox
 ```
 
 ## 架构设计
@@ -190,9 +227,23 @@ goroutine: HTTP Server         ← 静态文件 + WebSocket 端点
 
 `internal/gamepad/reader.go` 中的 `deadzone` 常量（当前 0.05），以及 `internal/gamepad/state.go` 中的 `analogThreshold` 常量（当前 0.01，用于增量比较）。
 
+## Input Overlay 格式
+
+完整配置格式规范（所有元素类型、精灵布局约定、自定义预设制作说明）请参阅 [docs/input-overlay-format.md](docs/input-overlay-format.md)。
+
+## GPV 皮肤转换器
+
+`gpvskin2overlay` 工具的编译和使用说明请参阅 [docs/gpvskin2overlay.md](docs/gpvskin2overlay.md)，该工具可将 GamepadViewer CSS 皮肤转换为 Input Overlay 格式。
+
 ## 许可证
 
-MIT License
+MIT License — 详见 [LICENSE](LICENSE)
+
+### 第三方许可证
+
+Input Overlay 预设文件（`.json` / `.png`）采用 **GPL-2.0** 协议授权，**不**包含在本仓库或 GameControllerView 发布包中。详见 [docs/third-party-licenses.md](docs/third-party-licenses.md)。
+
+> **打包注意事项**：分发 GameControllerView 时，**严禁**将 `overlays/` 目录下的预设文件一同打包。将 GPL-2.0 文件与 MIT 协议软件一同分发而不遵守 GPL 要求，构成协议违规。
 
 ## 贡献
 

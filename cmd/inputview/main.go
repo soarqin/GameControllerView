@@ -10,10 +10,10 @@ import (
 	"syscall"
 	"time"
 
-	"github.com/soar/gamecontrollerview/internal/gamepad"
-	"github.com/soar/gamecontrollerview/internal/hub"
-	"github.com/soar/gamecontrollerview/internal/server"
-	"github.com/soar/gamecontrollerview/internal/web"
+	"github.com/soar/inputview/internal/gamepad"
+	"github.com/soar/inputview/internal/hub"
+	"github.com/soar/inputview/internal/server"
+	"github.com/soar/inputview/internal/web"
 )
 
 func main() {
@@ -59,7 +59,7 @@ func main() {
 		}
 	}()
 
-	log.Println("GameControllerView started: http://localhost:8080")
+	log.Println("InputView started: http://localhost:8080")
 
 	// Run reader in a goroutine (SDL must run with LockOSThread internally)
 	readerDone := make(chan struct{})
@@ -98,5 +98,5 @@ func main() {
 		log.Printf("HTTP server shutdown error: %v", err)
 	}
 
-	log.Println("GameControllerView stopped")
+	log.Println("InputView stopped")
 }

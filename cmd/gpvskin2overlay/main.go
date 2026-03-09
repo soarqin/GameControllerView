@@ -1,5 +1,5 @@
 // Command gpvskin2overlay converts a GamepadViewer CSS skin into Input Overlay
-// format (JSON config + PNG texture atlas) that can be used with GameControllerView.
+// format (JSON config + PNG texture atlas) that can be used with InputView.
 //
 // Usage:
 //
@@ -21,7 +21,7 @@ import (
 	"os"
 	"path/filepath"
 
-	"github.com/soar/gamecontrollerview/internal/gpvskin"
+	"github.com/soar/inputview/internal/gpvskin"
 )
 
 func main() {

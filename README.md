@@ -1,4 +1,4 @@
-# GameControllerView
+# InputView
 
 A real-time game controller visualization tool that reads gamepad input via SDL3 and streams it to a web browser using WebSocket for live Canvas rendering.
 
@@ -22,14 +22,14 @@ A real-time game controller visualization tool that reads gamepad input via SDL3
 
 ```bash
 # Clone the repository
-git clone https://github.com/soarqin/GameControllerView.git
-cd GameControllerView
+git clone https://github.com/soarqin/InputView.git
+cd InputView
 
 # Install dependencies
 go mod download
 
 # Run in dev/console mode (logs visible in terminal)
-go run ./cmd/gamecontrollerview
+go run ./cmd/inputview
 
 # Or build a release binary (no console window, system tray on Windows)
 ./build.ps1   # Windows
@@ -87,8 +87,8 @@ http://localhost:8080/?p=3   # Third controller
 ## Project Structure
 
 ```
-GameControllerView/
-├── go.mod                              # module github.com/soar/gamecontrollerview
+InputView/
+├── go.mod                              # module github.com/soar/inputview
 ├── go.sum
 ├── build.ps1                           # Windows release build script (-tags release, -H=windowsgui)
 ├── build.sh                            # Linux/macOS release build script (-tags release)
@@ -96,7 +96,7 @@ GameControllerView/
 │   ├── input-overlay-format.md        # Input Overlay config format specification
 │   └── third-party-licenses.md        # Third-party license notices
 ├── cmd/
-│   └── gamecontrollerview/
+│   └── inputview/
 │       ├── main.go                     # Entry point: component assembly, signal handling
 │       ├── winres/                     # Windows resource definitions (icon, manifest)
 │       └── rsrc_windows_amd64.syso     # Compiled Windows resource object
@@ -131,10 +131,10 @@ GameControllerView/
 
 ### Input Overlay Presets (external, not included)
 
-Input Overlay presets (`.json` + `.png` texture atlas pairs) are placed in an `overlays/` directory **next to the executable** at runtime. They are **not** embedded in the binary and **not** distributed with GameControllerView releases.
+Input Overlay presets (`.json` + `.png` texture atlas pairs) are placed in an `overlays/` directory **next to the executable** at runtime. They are **not** embedded in the binary and **not** distributed with InputView releases.
 
 ```
-overlays/              ← place next to GameControllerView.exe
+overlays/              ← place next to InputView.exe
 ├── dualsense/
 │   ├── dualsense.json
 │   └── dualsense.png
@@ -143,7 +143,7 @@ overlays/              ← place next to GameControllerView.exe
     └── xbox-one-controller.png
 ```
 
-Presets from the [Input Overlay project](https://github.com/univrsal/input-overlay/tree/master/presets) are licensed under **GPL-2.0** and must not be bundled with GameControllerView distributions. See [docs/third-party-licenses.md](docs/third-party-licenses.md) for details.
+Presets from the [Input Overlay project](https://github.com/univrsal/input-overlay/tree/master/presets) are licensed under **GPL-2.0** and must not be bundled with InputView distributions. See [docs/third-party-licenses.md](docs/third-party-licenses.md) for details.
 
 ### Converting GamepadViewer Skins
 
@@ -246,9 +246,9 @@ MIT License — see [LICENSE](LICENSE)
 
 ### Third-Party
 
-Input Overlay preset files (`.json` / `.png`) are licensed under **GPL-2.0**. They are **not** included in this repository or in GameControllerView releases. See [docs/third-party-licenses.md](docs/third-party-licenses.md).
+Input Overlay preset files (`.json` / `.png`) are licensed under **GPL-2.0**. They are **not** included in this repository or in InputView releases. See [docs/third-party-licenses.md](docs/third-party-licenses.md).
 
-> **Packaging notice**: Do **NOT** bundle `overlays/` preset files when distributing GameControllerView. Distributing GPL-2.0 files alongside MIT-licensed software without GPL compliance is a license violation.
+> **Packaging notice**: Do **NOT** bundle `overlays/` preset files when distributing InputView. Distributing GPL-2.0 files alongside MIT-licensed software without GPL compliance is a license violation.
 
 ## Contributing
 

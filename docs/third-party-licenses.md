@@ -2,7 +2,7 @@
 
 ## Input Overlay Presets
 
-The preset files for [Input Overlay](https://github.com/univrsal/input-overlay) (`dualsense`, `xbox-one-controller`, etc.) are **not** part of this repository and are **not** distributed with GameControllerView binaries.
+The preset files for [Input Overlay](https://github.com/univrsal/input-overlay) (`dualsense`, `xbox-one-controller`, etc.) are **not** part of this repository and are **not** distributed with InputView binaries.
 
 These preset files are derived from the Input Overlay project, which is licensed under the **GNU General Public License v2.0 (GPL-2.0)**:
 
@@ -24,11 +24,11 @@ These preset files are derived from the Input Overlay project, which is licensed
 
 ### Why Presets Are External
 
-GameControllerView is licensed under the **MIT License**. The MIT License is not compatible with GPL-2.0 for combined distribution (GPL-2.0 requires all combined works to also be GPL-2.0). To avoid license conflict:
+InputView is licensed under the **MIT License**. The MIT License is not compatible with GPL-2.0 for combined distribution (GPL-2.0 requires all combined works to also be GPL-2.0). To avoid license conflict:
 
 - Preset files (`.json` + `.png`) are **not embedded** in the binary.
 - They must be placed externally in an `overlays/` directory next to the executable.
-- They are **not included** in GameControllerView releases.
+- They are **not included** in InputView releases.
 
 ### Obtaining Presets
 
@@ -40,15 +40,15 @@ Download and place them in `overlays/<preset-name>/` next to the executable. See
 
 ### Packaging Notice
 
-> **IMPORTANT**: When packaging or distributing GameControllerView, do **NOT** include any Input Overlay preset files (`.json` / `.png` files from the `overlays/` directory). Distributing these files alongside GameControllerView without GPL-2.0 compliance would be a license violation.
+> **IMPORTANT**: When packaging or distributing InputView, do **NOT** include any Input Overlay preset files (`.json` / `.png` files from the `overlays/` directory). Distributing these files alongside InputView without GPL-2.0 compliance would be a license violation.
 >
-> Only the GameControllerView source code and binary (which carry the MIT License) may be distributed freely.
+> Only the InputView source code and binary (which carry the MIT License) may be distributed freely.
 
 ---
 
 ## Other Dependencies
 
-All Go module dependencies used by GameControllerView carry licenses compatible with the MIT License. See `go.sum` for the full dependency list.
+All Go module dependencies used by InputView carry licenses compatible with the MIT License. See `go.sum` for the full dependency list.
 
 | Package | License |
 |---------|---------|

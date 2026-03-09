@@ -5,8 +5,8 @@ package main
 import (
 	"runtime"
 
-	"github.com/soar/gamecontrollerview/internal/gamepad"
-	"github.com/soar/gamecontrollerview/internal/tray"
+	"github.com/soar/inputview/internal/gamepad"
+	"github.com/soar/inputview/internal/tray"
 )
 
 // guiMode is true in release builds (-tags release).

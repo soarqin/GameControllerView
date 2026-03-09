@@ -43,8 +43,8 @@ func (t *Tray) onReady(iconData []byte) {
 	if iconData != nil {
 		systray.SetIcon(iconData)
 	}
-	systray.SetTitle("GameControllerView")
-	systray.SetTooltip("GameControllerView - http://localhost:8080")
+	systray.SetTitle("InputView")
+	systray.SetTooltip("InputView - http://localhost:8080")
 
 	t.menuOpen = systray.AddMenuItem("Open Browser", "Open web interface")
 	t.menuExit = systray.AddMenuItem("Exit", "Quit application")

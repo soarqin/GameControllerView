@@ -1,4 +1,4 @@
-module github.com/soar/gamecontrollerview
+module github.com/soar/inputview
 
 go 1.25.6
 

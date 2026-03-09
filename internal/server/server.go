@@ -8,8 +8,8 @@ import (
 	"os"
 	"path/filepath"
 
-	"github.com/soar/gamecontrollerview/internal/gamepad"
-	"github.com/soar/gamecontrollerview/internal/hub"
+	"github.com/soar/inputview/internal/gamepad"
+	"github.com/soar/inputview/internal/hub"
 )
 
 type Server struct {

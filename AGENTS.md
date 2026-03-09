@@ -1,4 +1,4 @@
-# GameControllerView
+# InputView
 
 Go backend reads gamepad input via SDL3, pushes to frontend via WebSocket, and renders real-time gamepad visualization on Canvas.
 
@@ -14,14 +14,14 @@ Go backend reads gamepad input via SDL3, pushes to frontend via WebSocket, and r
 
 ```bash
 # Dev/console build (default): console window visible, logs go to terminal
-go run ./cmd/gamecontrollerview
-go build -o GameControllerView.exe ./cmd/gamecontrollerview
+go run ./cmd/inputview
+go build -o InputView.exe ./cmd/inputview
 
 # Release build: no console window, system tray on Windows
 ./build.ps1          # Windows (PowerShell)
 ./build.sh           # Linux/macOS
 # Equivalent manual command (Windows):
-go build -tags release -ldflags "-s -w -H=windowsgui" -o GameControllerView.exe ./cmd/gamecontrollerview
+go build -tags release -ldflags "-s -w -H=windowsgui" -o InputView.exe ./cmd/inputview
 
 # Open browser at http://localhost:8080
 ```
@@ -40,8 +40,8 @@ Requires **SDL3.dll** (>= 3.2.0) in the same directory as the executable or in s
 ## Project Structure
 
 ```
-GameControllerView/
-├── go.mod                              # module github.com/soar/gamecontrollerview
+InputView/
+├── go.mod                              # module github.com/soar/inputview
 ├── go.sum
 ├── build.ps1                           # Windows release build script (-tags release, -H=windowsgui)
 ├── build.sh                            # Linux/macOS release build script (-tags release)
@@ -50,7 +50,7 @@ GameControllerView/
 │   ├── gpvskin2overlay.md             # GPV skin converter build & usage guide
 │   └── third-party-licenses.md        # Third-party license notices (GPL-2.0 presets)
 ├── cmd/
-│   ├── gamecontrollerview/
+│   ├── inputview/
 │   │   ├── main.go                     # Entry: component assembly, signal handling
 │   │   ├── winres/                     # Windows resource definitions (icon, manifest)
 │   │   └── rsrc_windows_amd64.syso     # Compiled Windows resource object

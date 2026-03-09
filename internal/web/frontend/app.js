@@ -239,7 +239,7 @@ function loadConfigIfNeeded() {
 // Input Overlay: Config + Texture Loading
 // ============================================================
 
-// SDL2 gamepad button codes → GameControllerView state paths
+// SDL2 gamepad button codes → InputView state paths
 // Matches layout_constants.h and vc.js from input-overlay
 const IO_BUTTON_CODE_MAP = {
     0:  s => s.buttons.a,

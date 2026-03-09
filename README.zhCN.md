@@ -1,4 +1,4 @@
-# GameControllerView
+# InputView
 
 实时游戏手柄可视化工具，通过 SDL3 读取手柄输入，使用 WebSocket 推送到浏览器，Canvas 实时渲染。
 
@@ -22,14 +22,14 @@
 
 ```bash
 # 克隆仓库
-git clone https://github.com/soarqin/GameControllerView.git
-cd GameControllerView
+git clone https://github.com/soarqin/InputView.git
+cd InputView
 
 # 安装依赖
 go mod download
 
 # 运行服务器
-go run ./cmd/gamecontrollerview
+go run ./cmd/inputview
 
 # 浏览器打开 http://localhost:8080
 ```
@@ -83,8 +83,8 @@ http://localhost:8080/?p=3   # 第三个手柄
 ## 项目结构
 
 ```
-GameControllerView/
-├── go.mod                              # module github.com/soar/gamecontrollerview
+InputView/
+├── go.mod                              # module github.com/soar/inputview
 ├── go.sum
 ├── build.ps1                           # Windows release 构建脚本（-tags release, -H=windowsgui）
 ├── build.sh                            # Linux/macOS release 构建脚本（-tags release）
@@ -92,7 +92,7 @@ GameControllerView/
 │   ├── input-overlay-format.md        # Input Overlay 配置格式规范
 │   └── third-party-licenses.md        # 第三方许可证说明
 ├── cmd/
-│   └── gamecontrollerview/
+│   └── inputview/
 │       ├── main.go                     # 入口：组件组装，信号处理
 │       ├── winres/                     # Windows 资源定义（图标、清单）
 │       └── rsrc_windows_amd64.syso     # 编译后的 Windows 资源对象
@@ -127,10 +127,10 @@ GameControllerView/
 
 ### Input Overlay 预设（外置，不随程序分发）
 
-Input Overlay 预设文件（`.json` + `.png` 纹理图集）在运行时放置于可执行文件旁的 `overlays/` 目录，**不**嵌入二进制文件，**不**随 GameControllerView 发布包分发。
+Input Overlay 预设文件（`.json` + `.png` 纹理图集）在运行时放置于可执行文件旁的 `overlays/` 目录，**不**嵌入二进制文件，**不**随 InputView 发布包分发。
 
 ```
-overlays/              ← 放置在 GameControllerView.exe 旁边
+overlays/              ← 放置在 InputView.exe 旁边
 ├── dualsense/
 │   ├── dualsense.json
 │   └── dualsense.png
@@ -139,7 +139,7 @@ overlays/              ← 放置在 GameControllerView.exe 旁边
     └── xbox-one-controller.png
 ```
 
-可从 [Input Overlay 项目](https://github.com/univrsal/input-overlay/tree/master/presets) 获取预设文件。这些文件采用 **GPL-2.0** 协议授权，**禁止**随 GameControllerView 打包分发。详见 [docs/third-party-licenses.md](docs/third-party-licenses.md)。
+可从 [Input Overlay 项目](https://github.com/univrsal/input-overlay/tree/master/presets) 获取预设文件。这些文件采用 **GPL-2.0** 协议授权，**禁止**随 InputView 打包分发。详见 [docs/third-party-licenses.md](docs/third-party-licenses.md)。
 
 ### 转换 GamepadViewer 皮肤
 
@@ -242,9 +242,9 @@ MIT License — 详见 [LICENSE](LICENSE)
 
 ### 第三方许可证
 
-Input Overlay 预设文件（`.json` / `.png`）采用 **GPL-2.0** 协议授权，**不**包含在本仓库或 GameControllerView 发布包中。详见 [docs/third-party-licenses.md](docs/third-party-licenses.md)。
+Input Overlay 预设文件（`.json` / `.png`）采用 **GPL-2.0** 协议授权，**不**包含在本仓库或 InputView 发布包中。详见 [docs/third-party-licenses.md](docs/third-party-licenses.md)。
 
-> **打包注意事项**：分发 GameControllerView 时，**严禁**将 `overlays/` 目录下的预设文件一同打包。将 GPL-2.0 文件与 MIT 协议软件一同分发而不遵守 GPL 要求，构成协议违规。
+> **打包注意事项**：分发 InputView 时，**严禁**将 `overlays/` 目录下的预设文件一同打包。将 GPL-2.0 文件与 MIT 协议软件一同分发而不遵守 GPL 要求，构成协议违规。
 
 ## 贡献
 

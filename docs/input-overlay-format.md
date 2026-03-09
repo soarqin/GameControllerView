@@ -1,8 +1,8 @@
 # Input Overlay Config Format
 
-GameControllerView supports the [Input Overlay](https://github.com/univrsal/input-overlay) config format for texture-atlas based rendering. This document describes the complete format, noting which element types are currently supported by GameControllerView.
+InputView supports the [Input Overlay](https://github.com/univrsal/input-overlay) config format for texture-atlas based rendering. This document describes the complete format, noting which element types are currently supported by InputView.
 
-> **License note**: The Input Overlay project is licensed under [GNU GPL v2](https://www.gnu.org/licenses/old-licenses/gpl-2.0.html). Preset files (`.json` + `.png`) derived from Input Overlay are **not** bundled with GameControllerView. See [third-party-licenses.md](third-party-licenses.md) for details.
+> **License note**: The Input Overlay project is licensed under [GNU GPL v2](https://www.gnu.org/licenses/old-licenses/gpl-2.0.html). Preset files (`.json` + `.png`) derived from Input Overlay are **not** bundled with InputView. See [third-party-licenses.md](third-party-licenses.md) for details.
 
 ## Activation
 
@@ -66,8 +66,8 @@ The overlay is scaled to fit the browser canvas while preserving aspect ratio, b
 
 ### All Element Types
 
-| `type` | Enum name | Description | GameControllerView |
-|--------|-----------|-------------|--------------------|
+| `type` | Enum name | Description | InputView |
+|--------|-----------|-------------|-----------|
 | `0` | `ET_TEXTURE` | Static background sprite | Supported |
 | `1` | `ET_KEYBOARD_KEY` | Keyboard key | Not supported |
 | `2` | `ET_GAMEPAD_BUTTON` | Gamepad digital button | Supported |
@@ -79,7 +79,7 @@ The overlay is scaled to fit the browser canvas while preserving aspect ratio, b
 | `8` | `ET_DPAD_STICK` | Composite D-pad | Supported |
 | `9` | `ET_MOUSE_MOVEMENT` | Mouse movement indicator | Not supported |
 
-Unsupported element types are silently skipped by GameControllerView.
+Unsupported element types are silently skipped by InputView.
 
 ---
 
@@ -364,7 +364,7 @@ The official CCT is a web-based tool that generates Input Overlay config files v
 1. Create a PNG texture atlas with all button sprites, following the frame layout conventions above.
 2. Write a JSON file referencing each sprite's base `[u, v, w, h]` crop and screen `pos`.
 3. Set `overlay_width` / `overlay_height` to the coordinate space dimensions used for `pos` values.
-4. Place both files in `overlays/<name>/` next to the GameControllerView executable.
+4. Place both files in `overlays/<name>/` next to the InputView executable.
 5. Open `http://localhost:8080/?overlay=<name>` in the browser.
 
 ### Coordinate System

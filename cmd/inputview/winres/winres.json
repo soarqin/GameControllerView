@@ -42,16 +42,16 @@
         },
         "info": {
           "0409": {
-            "Comments": "Game Controller View",
+            "Comments": "InputView",
             "CompanyName": "Soar Qin",
-            "FileDescription": "Game Controller View",
+            "FileDescription": "InputView",
             "FileVersion": "0.2.0.0",
-            "InternalName": "Game Controller View",
+            "InternalName": "InputView",
             "LegalCopyright": "Copyright © 2026 Soar Qin",
             "LegalTrademarks": "",
-            "OriginalFilename": "GameControllerView.exe",
+            "OriginalFilename": "InputView.exe",
             "PrivateBuild": "",
-            "ProductName": "Game Controller View",
+            "ProductName": "InputView",
             "ProductVersion": "0.1.0.0",
             "SpecialBuild": ""
           }

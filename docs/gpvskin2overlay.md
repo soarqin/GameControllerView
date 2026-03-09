@@ -1,6 +1,6 @@
 # gpvskin2overlay — GPV Skin Converter
 
-`gpvskin2overlay` converts [GamepadViewer](https://gamepadviewer.com/) CSS skins into [Input Overlay](https://github.com/univrsal/input-overlay) format (JSON config + PNG texture atlas) for use with GameControllerView.
+`gpvskin2overlay` converts [GamepadViewer](https://gamepadviewer.com/) CSS skins into [Input Overlay](https://github.com/univrsal/input-overlay) format (JSON config + PNG texture atlas) for use with InputView.
 
 ## Prerequisites
 
@@ -77,7 +77,7 @@ overlays/gpv-xbox/
 └── gpv-xbox.png     # Texture atlas (sprite sheet)
 ```
 
-Place the output directory next to `GameControllerView.exe` under `overlays/`, then open:
+Place the output directory next to `InputView.exe` under `overlays/`, then open:
 
 ```
 http://localhost:8080/?overlay=gpv-xbox

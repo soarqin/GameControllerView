@@ -6,8 +6,8 @@ import (
 	"log"
 	"runtime"
 
-	"github.com/soar/gamecontrollerview/internal/console"
-	"github.com/soar/gamecontrollerview/internal/gamepad"
+	"github.com/soar/inputview/internal/console"
+	"github.com/soar/inputview/internal/gamepad"
 )
 
 // guiMode is false in dev/console builds (default).

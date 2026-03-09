@@ -86,7 +86,8 @@ http://localhost:8080/?p=3   # 第三个手柄
 GameControllerView/
 ├── go.mod                              # module github.com/soar/gamecontrollerview
 ├── go.sum
-├── build.bat                           # Windows GUI 模式构建脚本
+├── build.ps1                           # Windows release 构建脚本（-tags release, -H=windowsgui）
+├── build.sh                            # Linux/macOS release 构建脚本（-tags release）
 ├── docs/
 │   ├── input-overlay-format.md        # Input Overlay 配置格式规范
 │   └── third-party-licenses.md        # 第三方许可证说明

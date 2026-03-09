@@ -13,7 +13,16 @@ Go backend reads gamepad input via SDL3, pushes to frontend via WebSocket, and r
 ## Build and Run
 
 ```bash
+# Dev/console build (default): console window visible, logs go to terminal
 go run ./cmd/gamecontrollerview
+go build -o GameControllerView.exe ./cmd/gamecontrollerview
+
+# Release build: no console window, system tray on Windows
+./build.ps1          # Windows (PowerShell)
+./build.sh           # Linux/macOS
+# Equivalent manual command (Windows):
+go build -tags release -ldflags "-s -w -H=windowsgui" -o GameControllerView.exe ./cmd/gamecontrollerview
+
 # Open browser at http://localhost:8080
 ```
 
@@ -34,7 +43,8 @@ Requires **SDL3.dll** (>= 3.2.0) in the same directory as the executable or in s
 GameControllerView/
 ├── go.mod                              # module github.com/soar/gamecontrollerview
 ├── go.sum
-├── build.bat                           # Windows GUI-mode build script
+├── build.ps1                           # Windows release build script (-tags release, -H=windowsgui)
+├── build.sh                            # Linux/macOS release build script (-tags release)
 ├── docs/
 │   ├── input-overlay-format.md        # Input Overlay config format specification
 │   ├── gpvskin2overlay.md             # GPV skin converter build & usage guide

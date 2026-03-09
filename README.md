@@ -28,8 +28,12 @@ cd GameControllerView
 # Install dependencies
 go mod download
 
-# Run the server
+# Run in dev/console mode (logs visible in terminal)
 go run ./cmd/gamecontrollerview
+
+# Or build a release binary (no console window, system tray on Windows)
+./build.ps1   # Windows
+./build.sh    # Linux/macOS
 
 # Open browser to http://localhost:8080
 ```
@@ -86,7 +90,8 @@ http://localhost:8080/?p=3   # Third controller
 GameControllerView/
 ├── go.mod                              # module github.com/soar/gamecontrollerview
 ├── go.sum
-├── build.bat                           # Windows GUI-mode build script
+├── build.ps1                           # Windows release build script (-tags release, -H=windowsgui)
+├── build.sh                            # Linux/macOS release build script (-tags release)
 ├── docs/
 │   ├── input-overlay-format.md        # Input Overlay config format specification
 │   └── third-party-licenses.md        # Third-party license notices

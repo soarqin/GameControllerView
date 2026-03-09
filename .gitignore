@@ -15,11 +15,11 @@
 go.work
 
 # Dependency directories
-vendor/
+/vendor/
 
 # IDE specific files
-.idea/
-.vscode/
+/.idea/
+/.vscode/
 *.swp
 *.swo
 *~
@@ -28,7 +28,5 @@ vendor/
 .DS_Store
 Thumbs.db
 
-# Claude Code directories
-.claude/
-.claude-plugins/
-.claude-sessions/
+# Overlays
+/overlays/

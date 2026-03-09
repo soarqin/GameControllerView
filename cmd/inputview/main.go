@@ -12,6 +12,7 @@ import (
 
 	"github.com/soar/inputview/internal/gamepad"
 	"github.com/soar/inputview/internal/hub"
+	"github.com/soar/inputview/internal/rawinput"
 	"github.com/soar/inputview/internal/server"
 	"github.com/soar/inputview/internal/web"
 )
@@ -37,8 +38,11 @@ func main() {
 	h := hub.NewHub()
 	go h.Run()
 
-	// Create broadcaster
-	broadcaster := hub.NewBroadcaster(h, reader.Changes())
+	// Create Raw Input reader for keyboard and mouse (Windows: global capture via Raw Input API)
+	kmReader := rawinput.New()
+
+	// Create broadcaster (listens to both gamepad and keyboard/mouse channels)
+	broadcaster := hub.NewBroadcaster(h, reader.Changes(), kmReader.Changes())
 	go broadcaster.Run()
 
 	// Determine the directory containing this executable.
@@ -61,12 +65,16 @@ func main() {
 
 	log.Println("InputView started: http://localhost:8080")
 
-	// Run reader in a goroutine (SDL must run with LockOSThread internally)
+	// Run gamepad reader (SDL must run with LockOSThread internally)
 	readerDone := make(chan struct{})
 	go func() {
 		reader.Run(ctx)
 		close(readerDone)
 	}()
+
+	// Run keyboard/mouse Raw Input reader in a separate goroutine
+	// (also uses LockOSThread internally on Windows for the message loop)
+	go kmReader.Run(ctx)
 
 	// Wait for any shutdown trigger
 	if extraShutdownCh != nil {

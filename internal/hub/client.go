@@ -3,6 +3,7 @@ package hub
 import (
 	"encoding/json"
 	"log"
+	"sync/atomic"
 
 	"github.com/gorilla/websocket"
 )
@@ -12,12 +13,18 @@ type PlayerSwitcher interface {
 	SetActiveByPlayerIndex(int) bool
 }
 
+// KMStateProvider can send the current keyboard/mouse state to a client on demand.
+type KMStateProvider interface {
+	SendInitialKMState(c *Client)
+}
+
 // Client represents a connected WebSocket client.
 type Client struct {
-	hub         *Hub
-	conn        *websocket.Conn
-	send        chan []byte
-	playerIndex int // 1-based player index this client is listening to
+	hub           *Hub
+	conn          *websocket.Conn
+	send          chan []byte
+	playerIndex   int          // 1-based player index this client is listening to
+	wantsKeyMouse atomic.Int32 // 1 when client has subscribed to keyboard/mouse events; 0 otherwise
 }
 
 // NewClient creates a new Client attached to the hub.
@@ -50,7 +57,9 @@ func (c *Client) WritePump() {
 }
 
 // ReadPumpWithHandler reads messages from the WebSocket and handles client commands.
-func (c *Client) ReadPumpWithHandler(reader PlayerSwitcher) {
+// kmProvider may be nil; if provided it is used to send the initial keyboard/mouse state
+// when the client sends a "subscribe_km" message.
+func (c *Client) ReadPumpWithHandler(reader PlayerSwitcher, kmProvider KMStateProvider) {
 	defer func() {
 		c.hub.Unregister(c)
 		c.conn.Close()
@@ -81,6 +90,14 @@ func (c *Client) ReadPumpWithHandler(reader PlayerSwitcher) {
 				log.Printf("Client switched to player %d", clientMsg.PlayerIndex)
 			} else {
 				log.Printf("Failed to switch to player %d: invalid index", clientMsg.PlayerIndex)
+			}
+		case "subscribe_km":
+			// Client requests keyboard/mouse event stream
+			c.wantsKeyMouse.Store(1)
+			log.Printf("Client subscribed to keyboard/mouse events")
+			// Send current full state immediately so client can render existing key states
+			if kmProvider != nil {
+				kmProvider.SendInitialKMState(c)
 			}
 		}
 	}

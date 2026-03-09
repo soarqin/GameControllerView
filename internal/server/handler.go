@@ -33,7 +33,8 @@ func handleWebSocket(h *hub.Hub, b *hub.Broadcaster, reader *gamepad.Reader) htt
 
 		// Start write pump
 		go client.WritePump()
-		// Start read pump with reader for handling client messages
-		go client.ReadPumpWithHandler(reader)
+		// Start read pump with reader for handling client messages.
+		// Pass broadcaster as KMStateProvider so subscribe_km gets the initial state.
+		go client.ReadPumpWithHandler(reader, b)
 	}
 }

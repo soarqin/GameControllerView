@@ -6,6 +6,7 @@ import (
 	"time"
 
 	"github.com/soar/inputview/internal/gamepad"
+	"github.com/soar/inputview/internal/input"
 )
 
 const (
@@ -15,16 +16,24 @@ const (
 
 // Broadcaster listens for gamepad state changes and broadcasts them to the hub.
 type Broadcaster struct {
-	hub       *Hub
-	changes   <-chan gamepad.GamepadState
-	lastState gamepad.GamepadState
-	seq       int64
+	hub         *Hub
+	changes     <-chan gamepad.GamepadState
+	kmChanges   <-chan input.KeyMouseState
+	lastState   gamepad.GamepadState
+	lastKMState input.KeyMouseState
+	seq         int64
+	kmSeq       int64
 }
 
-func NewBroadcaster(h *Hub, changes <-chan gamepad.GamepadState) *Broadcaster {
+func NewBroadcaster(h *Hub, changes <-chan gamepad.GamepadState, kmChanges <-chan input.KeyMouseState) *Broadcaster {
 	return &Broadcaster{
-		hub:     h,
-		changes: changes,
+		hub:       h,
+		changes:   changes,
+		kmChanges: kmChanges,
+		lastKMState: input.KeyMouseState{
+			Keys:         make(map[uint16]bool),
+			MouseButtons: make(map[uint16]bool),
+		},
 	}
 }
 
@@ -60,6 +69,14 @@ func (b *Broadcaster) Run() {
 				b.sendDelta(delta)
 			}
 
+		case kmState, ok := <-b.kmChanges:
+			if !ok {
+				// km channel closed; nil it out so we stop selecting it
+				b.kmChanges = nil
+				continue
+			}
+			b.handleKMState(kmState)
+
 		case <-ticker.C:
 			if b.lastState.Connected {
 				b.seq++
@@ -69,6 +86,19 @@ func (b *Broadcaster) Run() {
 	}
 }
 
+// handleKMState computes the delta from the previous keyboard/mouse state and broadcasts it.
+func (b *Broadcaster) handleKMState(curr input.KeyMouseState) {
+	delta := input.ComputeKeyMouseDelta(b.lastKMState, curr)
+	b.lastKMState = curr
+
+	if delta.IsEmpty() {
+		return
+	}
+
+	b.kmSeq++
+	b.sendKMDelta(delta)
+}
+
 // SendInitialState sends the current full state to a newly connected client.
 func (b *Broadcaster) SendInitialState(c *Client) {
 	b.seq++
@@ -76,6 +106,21 @@ func (b *Broadcaster) SendInitialState(c *Client) {
 	data, err := json.Marshal(msg)
 	if err != nil {
 		log.Printf("Error marshaling initial state: %v", err)
+		return
+	}
+	select {
+	case c.send <- data:
+	default:
+	}
+}
+
+// SendInitialKMState sends the current full keyboard/mouse state to a newly subscribed client.
+func (b *Broadcaster) SendInitialKMState(c *Client) {
+	b.kmSeq++
+	msg := NewKMFullMessage(b.kmSeq, &b.lastKMState)
+	data, err := json.Marshal(msg)
+	if err != nil {
+		log.Printf("Error marshaling initial km state: %v", err)
 		return
 	}
 	select {
@@ -103,4 +148,14 @@ func (b *Broadcaster) sendDelta(delta *gamepad.DeltaChanges) {
 	}
 	// For delta, we need to get player index from lastState
 	b.hub.BroadcastToPlayer(data, b.lastState.PlayerIndex)
+}
+
+func (b *Broadcaster) sendKMDelta(delta *input.KeyMouseDelta) {
+	msg := NewKMDeltaMessage(b.kmSeq, delta)
+	data, err := json.Marshal(msg)
+	if err != nil {
+		log.Printf("Error marshaling km delta message: %v", err)
+		return
+	}
+	b.hub.BroadcastKeyMouse(data)
 }

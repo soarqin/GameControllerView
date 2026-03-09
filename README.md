@@ -1,153 +1,108 @@
 # InputView
 
-A real-time game controller visualization tool that reads gamepad input via SDL3 and streams it to a web browser using WebSocket for live Canvas rendering.
+Real-time gamepad, keyboard, and mouse input visualizer. Go backend reads input and pushes state to a browser frontend via WebSocket for live Canvas rendering.
 
 ## Features
 
-- **Real-time Input Visualization**: See your gamepad inputs rendered live in the browser
-- **WebSocket Streaming**: Low-latency delta updates for smooth performance
-- **Multi-Controller Support**: Pre-configured layouts for Xbox, PlayStation, Switch Pro controllers
-- **Generic Fallback**: Automatic detection for unknown controllers
-- **Zero-Config Binary**: Single executable with embedded frontend assets
-- **Input Overlay Support**: Texture-atlas based rendering using [Input Overlay](https://github.com/univrsal/input-overlay) preset format (`?overlay=<name>`)
+- **Gamepad visualization** — Xbox, PlayStation, Switch Pro, and 550+ devices via VID/PID mapping
+- **Keyboard & Mouse visualization** — Global capture via Windows Raw Input API; works when InputView is in the background or in an OBS browser source
+- **Multi-controller support** — Multiple browser tabs, each showing a different controller
+- **Input Overlay support** — Drop-in compatible with [Input Overlay](https://github.com/univrsal/input-overlay) `.json` + `.png` texture atlas presets; all 10 element types supported
+- **Keyboard/mouse-only overlays** — Overlays that contain no gamepad elements render immediately without a controller connected
+- **Simple / OBS mode** — Transparent background, no UI chrome (`?simple=1`)
+- **System tray** — Windows GUI mode with tray icon and quit menu
+- **Zero-config binary** — Single executable with embedded frontend assets
 
 ## Requirements
 
-- **Go**: 1.25.6 or higher
-- **SDL3.dll**: Version 3.2.0 or higher
-  - Download from [SDL Releases](https://github.com/libsdl-org/SDL/releases)
-  - Place in the same directory as the executable or in system PATH
+- **SDL3.dll** (≥ 3.2.0) — place next to the executable or in system PATH
+  - Download from https://github.com/libsdl-org/SDL/releases
+- Windows required for keyboard/mouse capture; gamepad-only mode works on Linux/macOS
 
 ## Quick Start
 
 ```bash
-# Clone the repository
-git clone https://github.com/soarqin/InputView.git
-cd InputView
-
-# Install dependencies
-go mod download
-
 # Run in dev/console mode (logs visible in terminal)
 go run ./cmd/inputview
 
-# Or build a release binary (no console window, system tray on Windows)
-./build.ps1   # Windows
-./build.sh    # Linux/macOS
+# Release build — no console window, system tray enabled (Windows)
+./build.ps1     # Windows
+./build.sh      # Linux/macOS
 
-# Open browser to http://localhost:8080
+# Open browser
+http://localhost:8080
 ```
 
 ## URL Parameters
 
-The frontend supports the following URL parameters to customize the display:
-
-| Parameter | Description | Example |
-|-----------|-------------|---------|
-| `p` | Player index (1-based) to select which controller to display. Defaults to `1` (first connected controller). | `?p=2` for the second controller |
-| `simple` | Enable simple mode with transparent background and no UI elements. Set to `1` to enable. | `?simple=1` |
-| `alpha` | Controller body transparency (0.0 to 1.0). Lower values make the body more transparent. | `?alpha=0.5` |
-| `overlay` | Input Overlay preset name. Enables texture-atlas renderer instead of the built-in geometric renderer. | `?overlay=dualsense` |
+| Parameter | Description | Default | Example |
+|-----------|-------------|---------|---------|
+| `p` | Gamepad number (1-based) | `1` | `?p=2` |
+| `simple` | Transparent background, no UI | off | `?simple=1` |
+| `alpha` | Gamepad body opacity (0.0–1.0) | `1.0` | `?alpha=0.5` |
+| `overlay` | Input Overlay preset name | — | `?overlay=dualsense` |
+| `mouse_sens` | Mouse movement sensitivity divisor (lower = more sensitive) | `500` | `?mouse_sens=300` |
 
 ### Examples
 
 ```
-# Display the first controller (default)
+# Default — first connected gamepad
 http://localhost:8080/
 
-# Display the second connected controller
+# Second connected gamepad
 http://localhost:8080/?p=2
 
-# Simple mode (transparent background, no UI)
+# Simple mode (transparent background, no UI — for OBS browser source)
 http://localhost:8080/?simple=1
 
-# Semi-transparent controller with 50% opacity
+# Semi-transparent gamepad
 http://localhost:8080/?alpha=0.5
 
-# Combine multiple parameters
-http://localhost:8080/?p=2&simple=1&alpha=0.3
-
-# Use an Input Overlay preset (place files in overlays/dualsense/ next to the exe)
+# Input Overlay preset
 http://localhost:8080/?overlay=dualsense
 
-# Input Overlay preset with player 2, simple mode
+# Mouse overlay with increased sensitivity
+http://localhost:8080/?overlay=mouse&mouse_sens=300&simple=1
+
+# Combine parameters
 http://localhost:8080/?overlay=dualsense&p=2&simple=1
 ```
 
-### Multi-Controller Setup
+### Multi-Controller
 
-To view multiple controllers simultaneously, open multiple browser windows/tabs with different `p` values:
-
-```
-http://localhost:8080/?p=1   # First controller
-http://localhost:8080/?p=2   # Second controller
-http://localhost:8080/?p=3   # Third controller
-```
-
-## Project Structure
+Open multiple browser tabs with different `p` values:
 
 ```
-InputView/
-├── go.mod                              # module github.com/soar/inputview
-├── go.sum
-├── build.ps1                           # Windows release build script (-tags release, -H=windowsgui)
-├── build.sh                            # Linux/macOS release build script (-tags release)
-├── docs/
-│   ├── input-overlay-format.md        # Input Overlay config format specification
-│   └── third-party-licenses.md        # Third-party license notices
-├── cmd/
-│   └── inputview/
-│       ├── main.go                     # Entry point: component assembly, signal handling
-│       ├── winres/                     # Windows resource definitions (icon, manifest)
-│       └── rsrc_windows_amd64.syso     # Compiled Windows resource object
-└── internal/
-    ├── console/                        # Cross-platform console detection & Windows Ctrl+C handler
-    ├── gamepad/
-    │   ├── state.go                    # GamepadState data model, DeltaChanges, ComputeDelta
-    │   ├── mapping.go                  # Device mapping (raw axis/button indices → semantic names)
-    │   ├── mapping_table.go            # VID/PID mapping table (550+ entries)
-    │   └── reader.go                   # SDL3 Joystick reader (event + polling hybrid loop)
-    ├── hub/
-    │   ├── hub.go                      # WebSocket client management (register/unregister/broadcast)
-    │   ├── client.go                   # WebSocket client (read/write pumps)
-    │   ├── broadcast.go                # State changes → JSON broadcast (delta + periodic full sync)
-    │   └── message.go                  # WSMessage type definitions (full/delta/player_selected)
-    ├── server/
-    │   ├── server.go                   # HTTP server, routing (/ static files, /ws WebSocket)
-    │   └── handler.go                  # WebSocket upgrade handling
-    ├── tray/                           # Windows system tray integration
-    └── web/
-        ├── embed.go                    # go:embed frontend static files, exports FrontendFS()
-        └── frontend/                   # Frontend static files (embedded at build time)
-            ├── index.html
-            ├── styles.css
-            ├── app.js                  # WebSocket client + state management + Canvas rendering
-            └── configs/                # Controller layout JSON configs
-                ├── xbox.json
-                ├── playstation.json
-                ├── playstation5.json
-                └── switch_pro.json
+http://localhost:8080/?p=1
+http://localhost:8080/?p=2
 ```
 
-### Input Overlay Presets (external, not included)
+## Input Overlay Presets
 
-Input Overlay presets (`.json` + `.png` texture atlas pairs) are placed in an `overlays/` directory **next to the executable** at runtime. They are **not** embedded in the binary and **not** distributed with InputView releases.
+Place preset directories next to the executable:
 
 ```
-overlays/              ← place next to InputView.exe
-├── dualsense/
-│   ├── dualsense.json
-│   └── dualsense.png
-└── xbox-one-controller/
-    ├── xbox-one-controller.json
-    └── xbox-one-controller.png
+InputView.exe
+overlays/
+  dualsense/
+    dualsense.json
+    dualsense.png
+  mouse/
+    mouse.json
+    mouse.png
 ```
 
-Presets from the [Input Overlay project](https://github.com/univrsal/input-overlay/tree/master/presets) are licensed under **GPL-2.0** and must not be bundled with InputView distributions. See [docs/third-party-licenses.md](docs/third-party-licenses.md) for details.
+Open `http://localhost:8080/?overlay=dualsense` to use a preset.
 
-### Converting GamepadViewer Skins
+Presets that contain only keyboard/mouse element types (types 1, 3, 4, 9) automatically hide the controller status bar and render without waiting for a gamepad connection.
 
-The included `gpvskin2overlay` tool converts [GamepadViewer](https://gamepadviewer.com/) CSS skins into Input Overlay format. See **[docs/gpvskin2overlay.md](docs/gpvskin2overlay.md)** for build and usage instructions.
+Presets from the [Input Overlay project](https://github.com/univrsal/input-overlay/tree/master/presets) are licensed under **GPL-2.0** and must not be bundled with InputView distributions. See [docs/third-party-licenses.md](docs/third-party-licenses.md).
+
+See [docs/input-overlay-format.md](docs/input-overlay-format.md) for the full format specification.
+
+## GPV Skin Converter
+
+`cmd/gpvskin2overlay` converts [GamepadViewer](https://gamepadviewer.com/) CSS skins to Input Overlay format.
 
 ```bash
 go build -o gpvskin2overlay.exe ./cmd/gpvskin2overlay
@@ -155,52 +110,57 @@ gpvskin2overlay -skin xbox -out overlays/gpv-xbox
 # Then open: http://localhost:8080/?overlay=gpv-xbox
 ```
 
+See [docs/gpvskin2overlay.md](docs/gpvskin2overlay.md) for full usage.
+
+## Project Structure
+
+```
+cmd/
+  inputview/          # Main binary entry point
+  gpvskin2overlay/    # GPV skin converter CLI
+internal/
+  input/              # KeyMouseState model, scancode mapping (Raw Input → uiohook)
+  rawinput/           # Windows Raw Input API reader (keyboard + mouse, global capture)
+  gamepad/            # SDL3 joystick reader, VID/PID device mapping table (550+ entries)
+  hub/                # WebSocket hub, broadcaster, client management
+  server/             # HTTP server, WebSocket upgrade
+  tray/               # Windows system tray integration
+  gpvskin/            # GPV skin → Input Overlay conversion pipeline
+  web/frontend/       # HTML/CSS/JS frontend + gamepad layout configs
+overlays/             # External Input Overlay presets (not embedded in binary)
+docs/                 # Format specs and guides
+```
+
 ## Architecture
 
 ### Thread Model
 
-SDL3 must run on the OS main thread. `reader.Run(ctx)` is executed in a goroutine that calls `runtime.LockOSThread`, while the Hub and HTTP server run in independent goroutines.
-
 ```
-goroutine: Reader.Run(ctx)     ← SDL Init → Callback → PollEvent + Joystick Polling (~60Hz)
-                                   ↓
-                            chan GamepadState
-                                   ↓
-goroutine: Broadcaster.Run()   ← Listens for changes, broadcasts to matched clients
-goroutine: Hub.Run()           ← Manages WebSocket client connections
-goroutine: HTTP Server         ← Static files + WebSocket endpoint
+goroutine: gamepad.Reader.Run(ctx)    ← SDL3 joystick polling (~60Hz)
+                                           ↓ chan GamepadState
+goroutine: rawinput.Reader.Run(ctx)   ← Windows Raw Input (keyboard + mouse, global)
+                                           ↓ chan KeyMouseState (~60Hz)
+goroutine: Broadcaster.Run()          ← Computes deltas, broadcasts to WebSocket clients
+goroutine: Hub.Run()                  ← WebSocket client registration / unregistration
+goroutine: HTTP Server                ← Static files + /ws WebSocket endpoint
 ```
 
-### Data Flow
-
-`Reader` (SDL polling) → `chan GamepadState` → `Broadcaster` → `Hub.BroadcastToPlayer()` → WebSocket clients
-
-### Joystick Low-Level API (Not Gamepad)
-
-Intentionally uses SDL3 Joystick low-level API instead of Gamepad high-level API to avoid conflicts with other applications or games. The Joystick API reads HID device data directly and requires manual maintenance of axis/button index to semantic name mappings (see `mapping.go`).
-
-### WebSocket Message Protocol
+### WebSocket Protocol
 
 **Server → Client:**
-- `full`: Complete state snapshot (sent on new client connection, every 5 seconds, and after every 100 delta messages)
-- `delta`: Only changed fields (normal updates)
-- `player_selected`: Confirms gamepad switch
-- All messages include `seq` (incrementing sequence number) and `timestamp` (millisecond timestamp)
+| Type | When sent |
+|------|-----------|
+| `full` | On connect, every 5s, every 100 deltas |
+| `delta` | On gamepad state change |
+| `player_selected` | Confirms `select_player` request |
+| `km_full` | On `subscribe_km` (current keyboard/mouse snapshot) |
+| `km_delta` | On keyboard/mouse state change |
 
 **Client → Server:**
-- `select_player`: Select which gamepad to listen to
-
-### Device Mapping System
-
-`mapping.go` matches known devices (Xbox, PlayStation, Switch Pro) via VID/PID, with generic fallback for unknown devices. Mappings define:
-- Axis indices → stick/trigger correspondence
-- Button indices → button name correspondence
-- Axis value normalization ranges (sticks -1.0~1.0, triggers 0.0~1.0)
-- Whether Y-axis needs inversion
-
-### Frontend Configuration System
-
-`internal/web/frontend/configs/*.json` defines Canvas drawing layouts for each controller (button coordinates, sizes, radii). The frontend automatically loads the corresponding config based on the `controllerType` reported by the backend.
+| Type | Purpose |
+|------|---------|
+| `select_player` | Switch to a different gamepad |
+| `subscribe_km` | Subscribe to keyboard/mouse events (sent automatically when overlay contains km elements) |
 
 ## Dependencies
 
@@ -208,48 +168,27 @@ Intentionally uses SDL3 Joystick low-level API instead of Gamepad high-level API
 |---------|---------|
 | `github.com/jupiterrider/purego-sdl3` | CGo-free SDL3 Go bindings |
 | `github.com/gorilla/websocket` | WebSocket server |
-| `github.com/ebitengine/purego` | Indirect dependency, FFI base for purego-sdl3 |
-| `fyne.io/systray` | Windows system tray integration |
+| `github.com/ebitengine/purego` | FFI base (transitive) |
+| `fyne.io/systray` | Windows system tray |
 
 ## Common Modifications
 
-### Adding Support for New Controllers
+### Adding a New Controller
 
-1. `internal/gamepad/mapping.go`: Add VID/PID → DeviceMapping to the `knownDevices` map
-2. If button layout differs from existing mappings, create a new `DeviceMapping` variable
-3. `internal/web/frontend/configs/`: Add a new layout JSON file
-4. `internal/web/frontend/app.js`: Add mapping name → config filename to `configMap`
+1. `internal/gamepad/mapping.go` — add VID/PID → `DeviceMapping` to `knownDevices`
+2. `internal/web/frontend/configs/` — add layout JSON
+3. `internal/web/frontend/app.js` — add entry to `configMap`
 
-### Modifying Canvas Rendering
+### Changing Poll Rate
 
-All drawing logic is in `internal/web/frontend/app.js` in the `drawController()` function and its sub-functions. Button positions and sizes are controlled by `configs/*.json`, colors are controlled by the `COLORS` constant.
-
-### Changing Polling Frequency
-
-The `pollDelayNS` constant in `internal/gamepad/reader.go` (currently 16ms ≈ 60Hz).
+`pollDelayNS` in `internal/gamepad/reader.go` (default 16ms ≈ 60Hz).
 
 ### Changing Deadzone
 
-The `deadzone` constant in `internal/gamepad/reader.go` (currently 0.05), and the `analogThreshold` constant in `internal/gamepad/state.go` (currently 0.01, used for delta comparison).
-
-## Input Overlay Format
-
-See [docs/input-overlay-format.md](docs/input-overlay-format.md) for the full config format specification, including all element types, sprite layout conventions, and instructions for creating custom presets.
-
-## GPV Skin Converter
-
-See [docs/gpvskin2overlay.md](docs/gpvskin2overlay.md) for build and usage instructions for the `gpvskin2overlay` tool, which converts GamepadViewer CSS skins into Input Overlay format.
+`deadzone` in `internal/gamepad/reader.go` (default 0.05); `analogThreshold` in `internal/gamepad/state.go` (default 0.01).
 
 ## License
 
-MIT License — see [LICENSE](LICENSE)
+MIT — see [LICENSE](LICENSE)
 
-### Third-Party
-
-Input Overlay preset files (`.json` / `.png`) are licensed under **GPL-2.0**. They are **not** included in this repository or in InputView releases. See [docs/third-party-licenses.md](docs/third-party-licenses.md).
-
-> **Packaging notice**: Do **NOT** bundle `overlays/` preset files when distributing InputView. Distributing GPL-2.0 files alongside MIT-licensed software without GPL compliance is a license violation.
-
-## Contributing
-
-Contributions are welcome! Please feel free to submit a Pull Request.
+> **Packaging notice**: Do **not** bundle `overlays/` preset files when distributing InputView. Those files are GPL-2.0 licensed. See [docs/third-party-licenses.md](docs/third-party-licenses.md).

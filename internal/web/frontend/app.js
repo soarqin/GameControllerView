@@ -35,6 +35,31 @@ let overlayConfig = null;   // parsed JSON from Input Overlay config file
 let overlayTexture = null;  // HTMLImageElement of the texture atlas
 let overlayReady = false;   // true once both config and texture are loaded
 
+// Overlay content flags — set once the config JSON is parsed.
+// overlayHasGamepad: config contains at least one gamepad element (type 2/5/6/7/8)
+// overlayHasKM:      config contains at least one keyboard/mouse element (type 1/3/4/9)
+// When overlayHasGamepad is false:
+//   - the p= URL parameter is ignored
+//   - select_player is not sent to the backend
+//   - the Player / controller info bar is hidden
+let overlayHasGamepad = true;  // default true until config tells us otherwise
+let overlayHasKM = false;
+
+// Keyboard and mouse state (populated from km_full / km_delta WebSocket messages)
+const kmState = {
+    keys: {},           // uiohook scancode (number) → boolean (pressed)
+    mouseButtons: {},   // IO button code (1-5) → boolean (pressed)
+    mouseMove: { x: 0, y: 0 },    // normalised [-1,1] movement delta from current tick
+    wheelUp: false,
+    wheelDown: false,
+    wheelTimestamp: 0,  // ms timestamp of last wheel event (for timeout reset)
+};
+// How long (ms) to keep wheel state active before resetting to neutral
+const WHEEL_TIMEOUT_MS = 200;
+
+// Whether we have already subscribed to keyboard/mouse events for this session
+let kmSubscribed = false;
+
 // ============================================================
 // WebSocket Connection
 // ============================================================
@@ -52,12 +77,25 @@ function connectWebSocket() {
     ws.onopen = () => {
         reconnectDelay = 1000;
         setWSStatus(true);
-        // Send selected player index to backend
-        const selectMsg = JSON.stringify({
-            type: 'select_player',
-            playerIndex: selectedPlayerIndex
-        });
-        ws.send(selectMsg);
+        // Send selected player index to backend, unless the overlay has no gamepad elements
+        // (in that case we don't need gamepad data at all).
+        if (overlayName === null || overlayHasGamepad) {
+            const selectMsg = JSON.stringify({
+                type: 'select_player',
+                playerIndex: selectedPlayerIndex
+            });
+            ws.send(selectMsg);
+        }
+
+        // Send mouse sensitivity if user provided it via URL parameter
+        if (window._mouseSens !== undefined) {
+            ws.send(JSON.stringify({ type: 'set_mouse_sens', value: window._mouseSens }));
+        }
+
+        // Re-subscribe to keyboard/mouse if we already determined that the overlay needs it
+        if (kmSubscribed) {
+            ws.send(JSON.stringify({ type: 'subscribe_km' }));
+        }
     };
 
     ws.onclose = () => {
@@ -94,6 +132,8 @@ function setWSStatus(connected) {
 }
 
 function updateStatusIndicator() {
+    // In overlay mode with no gamepad elements, the status indicator is hidden — skip update.
+    if (overlayName !== null && !overlayHasGamepad) return;
     const dot = document.getElementById('ws-status');
     const text = document.getElementById('ws-text');
     if (!wsConnected) {
@@ -134,6 +174,81 @@ function handleMessage(msg) {
                 console.log(`Player ${msg.playerIndex} selected`);
             }
             break;
+        case 'km_full':
+            if (msg.kmState) {
+                applyKMFull(msg.kmState);
+            }
+            break;
+        case 'km_delta':
+            if (msg.kmDelta) {
+                applyKMDelta(msg.kmDelta);
+            }
+            break;
+    }
+}
+
+// Apply a full keyboard/mouse state snapshot.
+function applyKMFull(data) {
+    // Reset and rebuild keys
+    Object.keys(kmState.keys).forEach(k => delete kmState.keys[k]);
+    if (data.keys) {
+        for (const [code, pressed] of Object.entries(data.keys)) {
+            if (pressed) kmState.keys[Number(code)] = true;
+        }
+    }
+    // Reset and rebuild mouse buttons
+    Object.keys(kmState.mouseButtons).forEach(k => delete kmState.mouseButtons[k]);
+    if (data.mouseButtons) {
+        for (const [code, pressed] of Object.entries(data.mouseButtons)) {
+            if (pressed) kmState.mouseButtons[Number(code)] = true;
+        }
+    }
+    // Mouse movement and wheel are per-tick — not meaningful in a full snapshot
+    kmState.mouseMove.x = 0;
+    kmState.mouseMove.y = 0;
+    kmState.wheelUp = false;
+    kmState.wheelDown = false;
+}
+
+// Apply an incremental keyboard/mouse delta.
+function applyKMDelta(delta) {
+    // Key down events
+    if (delta.keysDown) {
+        for (const code of delta.keysDown) {
+            kmState.keys[code] = true;
+        }
+    }
+    // Key up events
+    if (delta.keysUp) {
+        for (const code of delta.keysUp) {
+            delete kmState.keys[code];
+        }
+    }
+    // Mouse button down events
+    if (delta.buttonsDown) {
+        for (const code of delta.buttonsDown) {
+            kmState.mouseButtons[code] = true;
+        }
+    }
+    // Mouse button up events
+    if (delta.buttonsUp) {
+        for (const code of delta.buttonsUp) {
+            delete kmState.mouseButtons[code];
+        }
+    }
+    // Mouse movement
+    if (delta.mouseMove) {
+        kmState.mouseMove.x = delta.mouseMove.x;
+        kmState.mouseMove.y = delta.mouseMove.y;
+    } else {
+        kmState.mouseMove.x = 0;
+        kmState.mouseMove.y = 0;
+    }
+    // Wheel state with timeout
+    if (delta.wheelUp || delta.wheelDown) {
+        kmState.wheelUp = delta.wheelUp || false;
+        kmState.wheelDown = delta.wheelDown || false;
+        kmState.wheelTimestamp = performance.now();
     }
 }
 
@@ -181,6 +296,8 @@ function applyDelta(changes) {
 }
 
 function updateControllerInfo() {
+    // In overlay mode with no gamepad elements, the info bar is hidden — skip update.
+    if (overlayName !== null && !overlayHasGamepad) return;
     const el = document.getElementById('controller-name');
     if (state.connected && state.name) {
         el.textContent = `Player ${selectedPlayerIndex}: ${state.name} (${state.controllerType})`;
@@ -267,6 +384,45 @@ function ioButtonPressed(code) {
     return getter ? !!getter(state) : false;
 }
 
+// analyzeOverlayContent inspects the loaded config and sets overlayHasGamepad / overlayHasKM.
+// Also sends subscribe_km if the config contains km elements, and hides the gamepad UI
+// bar when there are no gamepad elements.
+function analyzeOverlayContent(cfg) {
+    const gpTypes = new Set([2, 5, 6, 7, 8]);
+    const kmTypes = new Set([1, 3, 4, 9]);
+    const elements = cfg.elements || [];
+    overlayHasGamepad = elements.some(el => gpTypes.has(el.type));
+    overlayHasKM = elements.some(el => kmTypes.has(el.type));
+
+    // Hide/show the Player info and controller status bar
+    applyGamepadUIVisibility();
+
+    // Subscribe to km events if needed
+    if (overlayHasKM && !kmSubscribed) {
+        kmSubscribed = true;
+        if (ws && ws.readyState === WebSocket.OPEN) {
+            ws.send(JSON.stringify({ type: 'subscribe_km' }));
+            console.log('Auto-subscribed to keyboard/mouse events');
+        }
+    }
+}
+
+// applyGamepadUIVisibility shows or hides the controller-info bar based on whether the
+// current overlay needs gamepad data.
+function applyGamepadUIVisibility() {
+    // Only applies in overlay mode; geometric mode always needs the info bar.
+    if (overlayName === null) return;
+    const infoBar = document.getElementById('controller-info');
+    const statusEl = document.getElementById('status');
+    if (!overlayHasGamepad) {
+        if (infoBar) infoBar.style.display = 'none';
+        if (statusEl) statusEl.style.display = 'none';
+    } else {
+        if (infoBar) infoBar.style.display = '';
+        if (statusEl) statusEl.style.display = '';
+    }
+}
+
 // Load an Input Overlay config: tries external overlays dir first, then embedded
 function loadInputOverlayConfig(name) {
     overlayReady = false;
@@ -286,6 +442,14 @@ function loadInputOverlayConfig(name) {
         })
         .then(cfg => {
             overlayConfig = cfg;
+            // Analyse content flags and handle km subscription + UI visibility
+            analyzeOverlayContent(cfg);
+            // Resize canvas to exactly match the overlay's native dimensions — no scaling.
+            if (cfg.overlay_width && cfg.overlay_height) {
+                canvasW = cfg.overlay_width;
+                canvasH = cfg.overlay_height;
+                setupCanvas();
+            }
             // Derive texture filename: same name as JSON but with .png extension
             const pngUrl = `${baseUrl}${encodeURIComponent(name)}.png`;
             const img = new Image();
@@ -365,27 +529,14 @@ function ioDrawTriggerFill(sx, sy, sw, sh, dx, dy, dw, dh, fillRatio, direction)
 // Main Input Overlay draw function
 function drawInputOverlay() {
     if (!overlayConfig) {
-        if (!simpleMode) drawDisconnected();
+        // Config not yet loaded. Show "no controller" placeholder only when the overlay
+        // will need gamepad data (otherwise show nothing while assets load).
+        if (!simpleMode && overlayHasGamepad) drawDisconnected();
         return;
     }
     if (!overlayReady) return; // still loading
 
     const cfg = overlayConfig;
-    const ow = cfg.overlay_width  || 1280;
-    const oh = cfg.overlay_height || 720;
-
-    // Compute uniform scale to fit overlay into canvas, centered
-    const scaleX = W / ow;
-    const scaleY = H / oh;
-    const scale  = Math.min(scaleX, scaleY);
-    const offX   = (W - ow * scale) / 2;
-    const offY   = (H - oh * scale) / 2;
-
-    // Helper: map overlay coordinates to canvas coordinates
-    const ox = (x, w) => offX + x * scale;
-    const oy = (y, h) => offY + y * scale;
-    const ow2 = w => w * scale;
-    const oh2 = h => h * scale;
 
     // Sort elements by z_level (ascending), stable sort
     const elements = [...(cfg.elements || [])].sort((a, b) => {
@@ -403,11 +554,11 @@ function drawInputOverlay() {
         const [mu, mv, mw, mh] = el.mapping;
         const [px, py] = el.pos || [0, 0];
 
-        // Destination rectangle on canvas
-        const dx = ox(px);
-        const dy = oy(py);
-        const dw = ow2(mw);
-        const dh = oh2(mh);
+        // Destination rectangle on canvas (1:1 overlay coordinates)
+        const dx = px;
+        const dy = py;
+        const dw = mw;
+        const dh = mh;
 
         switch (type) {
             case 0: {
@@ -431,7 +582,7 @@ function drawInputOverlay() {
                 // Analog stick
                 const side = el.side === 1 ? 'right' : 'left';
                 const stickState = state.sticks[side];
-                const radius = (el.stick_radius || 40) * scale;
+                const radius = el.stick_radius || 40;
 
                 // Knob offset in canvas pixels
                 const kx = stickState.position.x * radius;
@@ -491,8 +642,88 @@ function drawInputOverlay() {
                 break;
             }
 
-            // Types 1 (keyboard), 3 (mouse button), 4 (wheel), 9 (mouse movement):
-            // Not relevant for gamepad display — skip silently.
+            case 1: {
+                // Keyboard key — two-frame vertical sprite layout (same as gamepad button)
+                // el.code = uiohook scancode
+                const pressed = !!kmState.keys[el.code];
+                const sv = pressed ? mv + mh + BORDER : mv;
+                ioDrawSprite(mu, sv, mw, mh, dx, dy, dw, dh);
+                break;
+            }
+
+            case 3: {
+                // Mouse button — two-frame vertical sprite layout (same as gamepad button)
+                // el.code: 1=left, 2=right, 3=middle, 4=X1, 5=X2
+                const pressed = !!kmState.mouseButtons[el.code];
+                const sv = pressed ? mv + mh + BORDER : mv;
+                ioDrawSprite(mu, sv, mw, mh, dx, dy, dw, dh);
+                break;
+            }
+
+            case 4: {
+                // Mouse wheel — 4 horizontal frames:
+                //   frame0 [u,        v]: neutral (middle button released)
+                //   frame1 [u+w+3,    v]: middle button pressed
+                //   frame2 [u+(w+3)*2,v]: scroll up
+                //   frame3 [u+(w+3)*3,v]: scroll down
+                // Neutral frame is always drawn first; active states are layered on top.
+                const now = performance.now();
+                const wheelExpired = (now - kmState.wheelTimestamp) > WHEEL_TIMEOUT_MS;
+                if (wheelExpired) {
+                    kmState.wheelUp = false;
+                    kmState.wheelDown = false;
+                }
+                // Always draw neutral frame
+                ioDrawSprite(mu, mv, mw, mh, dx, dy, dw, dh);
+                // Middle button pressed
+                if (kmState.mouseButtons[3]) {
+                    ioDrawSprite(mu + (mw + BORDER), mv, mw, mh, dx, dy, dw, dh);
+                }
+                // Scroll up overlay
+                if (kmState.wheelUp && !wheelExpired) {
+                    ioDrawSprite(mu + (mw + BORDER) * 2, mv, mw, mh, dx, dy, dw, dh);
+                }
+                // Scroll down overlay
+                if (kmState.wheelDown && !wheelExpired) {
+                    ioDrawSprite(mu + (mw + BORDER) * 3, mv, mw, mh, dx, dy, dw, dh);
+                }
+                break;
+            }
+
+            case 9: {
+                // Mouse movement indicator
+                // el.mouse_type: 0 = Move (sprite translates), 1 = Point (sprite rotates)
+                // el.mouse_radius: max offset in overlay coordinates
+                const radius = el.mouse_radius || 40;
+                const mx = kmState.mouseMove.x;
+                const my = kmState.mouseMove.y;
+
+                if (el.mouse_type === 0) {
+                    // Move mode: shift sprite position by movement delta * radius
+                    const offsetX = mx * radius;
+                    const offsetY = my * radius;
+                    ioDrawSprite(mu, mv, mw, mh, dx + offsetX, dy + offsetY, dw, dh);
+                } else {
+                    // Point mode: rotate sprite to face movement direction
+                    if (mx === 0 && my === 0) {
+                        // No movement: draw unrotated
+                        ioDrawSprite(mu, mv, mw, mh, dx, dy, dw, dh);
+                    } else {
+                        // Sprite faces up by default, so angle 0 = up.
+                        // atan2(mx, -my): up=(0,-1)→0, right=(1,0)→π/2, etc.
+                        const angle = Math.atan2(mx, -my);
+                        ctx.save();
+                        ctx.translate(dx + dw / 2, dy + dh / 2);
+                        ctx.rotate(angle);
+                        ctx.drawImage(overlayTexture,
+                            mu, mv, mw, mh,
+                            -dw / 2, -dh / 2, dw, dh);
+                        ctx.restore();
+                    }
+                }
+                break;
+            }
+
             default:
                 break;
         }
@@ -519,26 +750,35 @@ function setupCanvas() {
         canvas.width = vw * dpr;
         canvas.height = vh * dpr;
 
-        // Calculate scale to fit WxH while maintaining aspect ratio
-        const scaleX = vw / W;
-        const scaleY = vh / H;
+        // Scale logical canvas to fit viewport, preserving aspect ratio
+        const scaleX = vw / canvasW;
+        const scaleY = vh / canvasH;
         const scale = Math.min(scaleX, scaleY);
 
-        // Center the controller
-        const offsetX = (vw - W * scale) / 2;
-        const offsetY = (vh - H * scale) / 2;
+        // Center
+        const offsetX = (vw - canvasW * scale) / 2;
+        const offsetY = (vh - canvasH * scale) / 2;
 
         ctx.setTransform(dpr * scale, 0, 0, dpr * scale, dpr * offsetX, dpr * offsetY);
     } else {
+        // In overlay mode, size the canvas element to exactly the overlay dimensions.
+        // In geometric mode, the canvas is sized by CSS (max-width layout).
+        if (overlayName !== null) {
+            canvas.style.width  = canvasW + 'px';
+            canvas.style.height = canvasH + 'px';
+        }
         const rect = canvas.getBoundingClientRect();
-        canvas.width = rect.width * dpr;
+        canvas.width  = rect.width  * dpr;
         canvas.height = rect.height * dpr;
         ctx.scale(dpr, dpr);
     }
 }
 
-const W = 500;
-const H = 330;
+// Logical canvas dimensions.
+// In geometric mode: fixed 500×330.
+// In overlay mode: set to overlay_width × overlay_height once the config is loaded.
+let canvasW = 500;
+let canvasH = 330;
 
 // Colors
 const COLORS = {
@@ -582,11 +822,14 @@ function resolveLabelConfig(posLabelConfig, defaultLabelConfig, defaults) {
 }
 
 function render() {
-    ctx.clearRect(0, 0, W, H);
+    ctx.clearRect(0, 0, canvasW, canvasH);
 
     if (overlayName !== null) {
-        // Input Overlay rendering mode
-        if (!state.connected) {
+        // Input Overlay rendering mode.
+        // Render if: gamepad is connected (for gamepad elements), OR the overlay only has
+        // keyboard/mouse elements (which are always available regardless of gamepad state).
+        const canRender = state.connected || !overlayHasGamepad;
+        if (!canRender) {
             if (!simpleMode) drawDisconnected();
         } else {
             drawInputOverlay();
@@ -610,9 +853,9 @@ function drawDisconnected() {
     ctx.font = '20px "Segoe UI", sans-serif';
     ctx.textAlign = 'center';
     ctx.textBaseline = 'middle';
-    ctx.fillText('No controller connected', W / 2, H / 2);
+    ctx.fillText('No controller connected', canvasW / 2, canvasH / 2);
     ctx.font = '14px "Segoe UI", sans-serif';
-    ctx.fillText('Connect a gamepad and it will appear here', W / 2, H / 2 + 30);
+    ctx.fillText('Connect a gamepad and it will appear here', canvasW / 2, canvasH / 2 + 30);
 }
 
 function drawController() {
@@ -1166,7 +1409,21 @@ function init() {
     const overlayParam = urlParams.get('overlay');
     if (overlayParam) {
         overlayName = overlayParam;
+        // Optimistically hide gamepad UI until the config tells us it's needed.
+        // This avoids a visible flash of the controller-info bar on load.
+        overlayHasGamepad = false;
         loadInputOverlayConfig(overlayName);
+    }
+
+    // Parse mouse_sens parameter: controls sensitivity of mouse_movement elements.
+    // Value is sent to the backend via a "set_mouse_sens" message after connection.
+    const sensParam = urlParams.get('mouse_sens');
+    if (sensParam !== null) {
+        const sens = parseFloat(sensParam);
+        if (!isNaN(sens) && sens > 0) {
+            // Store for sending after WebSocket connection opens
+            window._mouseSens = sens;
+        }
     }
 
     // Apply simple mode styles

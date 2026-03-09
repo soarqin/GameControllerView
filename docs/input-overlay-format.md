@@ -14,7 +14,14 @@ Add `?overlay=<name>` to the URL. The config is looked up in:
 ```
 http://localhost:8080/?overlay=dualsense
 http://localhost:8080/?overlay=xbox-one-controller&p=2&simple=1
+http://localhost:8080/?overlay=keyboard&mouse_sens=300
 ```
+
+When the loaded config contains keyboard/mouse element types (`ET_KEYBOARD_KEY`, `ET_MOUSE_BUTTON`, `ET_WHEEL`, or `ET_MOUSE_MOVEMENT`), the frontend automatically subscribes to keyboard and mouse events from the backend. No extra URL parameter is needed.
+
+### `mouse_sens` parameter
+
+Controls the sensitivity of `ET_MOUSE_MOVEMENT` elements. The raw pixel delta reported by the OS is divided by this value and clamped to `[-1.0, 1.0]`. Default: `500`. Smaller values = more sensitive (larger visual movement per physical pixel moved).
 
 ## File Pair
 
@@ -69,17 +76,15 @@ The overlay is scaled to fit the browser canvas while preserving aspect ratio, b
 | `type` | Enum name | Description | InputView |
 |--------|-----------|-------------|-----------|
 | `0` | `ET_TEXTURE` | Static background sprite | Supported |
-| `1` | `ET_KEYBOARD_KEY` | Keyboard key | Not supported |
+| `1` | `ET_KEYBOARD_KEY` | Keyboard key | Supported |
 | `2` | `ET_GAMEPAD_BUTTON` | Gamepad digital button | Supported |
-| `3` | `ET_MOUSE_BUTTON` | Mouse button | Not supported |
-| `4` | `ET_WHEEL` | Mouse scroll wheel | Not supported |
+| `3` | `ET_MOUSE_BUTTON` | Mouse button | Supported |
+| `4` | `ET_WHEEL` | Mouse scroll wheel | Supported |
 | `5` | `ET_ANALOG_STICK` | Analog stick | Supported |
 | `6` | `ET_TRIGGER` | Analog trigger | Supported |
 | `7` | `ET_GAMEPAD_ID` | Player number indicator | Supported |
 | `8` | `ET_DPAD_STICK` | Composite D-pad | Supported |
-| `9` | `ET_MOUSE_MOVEMENT` | Mouse movement indicator | Not supported |
-
-Unsupported element types are silently skipped by InputView.
+| `9` | `ET_MOUSE_MOVEMENT` | Mouse movement indicator | Supported |
 
 ---
 
@@ -101,13 +106,15 @@ No extra fields. The sprite at `mapping` is drawn at `pos`.
 
 ---
 
-### Type 1 — `ET_KEYBOARD_KEY` (keyboard key) — **Not supported**
+### Type 1 — `ET_KEYBOARD_KEY` (keyboard key) — **Supported**
 
 | Field | Type | Description |
 |-------|------|-------------|
-| `code` | integer | uiohook virtual key code |
+| `code` | integer | uiohook virtual key code (PS/2 Set 1 scan code; E0-extended keys use `0x0E00` or `0xE000` prefix) |
 
 **Sprite layout**: same as `ET_GAMEPAD_BUTTON` — released state at `mapping`, pressed state at `[u, v+h+3]`.
+
+**Input source**: Windows Raw Input API (global capture — works even when InputView is in the background).
 
 ---
 
@@ -156,21 +163,23 @@ No extra fields. The sprite at `mapping` is drawn at `pos`.
 
 ---
 
-### Type 3 — `ET_MOUSE_BUTTON` (mouse button) — **Not supported**
+### Type 3 — `ET_MOUSE_BUTTON` (mouse button) — **Supported**
 
 | Field | Type | Description |
 |-------|------|-------------|
-| `code` | integer | uiohook mouse button code |
+| `code` | integer | Input Overlay mouse button code: `1`=left, `2`=right, `3`=middle, `4`=X1 (back), `5`=X2 (forward) |
 
 **Sprite layout**: same as `ET_GAMEPAD_BUTTON` — released state at `mapping`, pressed state at `[u, v+h+3]`.
 
+**Input source**: Windows Raw Input API (global capture).
+
 ---
 
-### Type 4 — `ET_WHEEL` (mouse scroll wheel) — **Not supported**
+### Type 4 — `ET_WHEEL` (mouse scroll wheel) — **Supported**
 
 No extra fields.
 
-**Sprite layout**: 3 sprites arranged **horizontally** in the texture atlas, each `w+3` px apart:
+**Sprite layout**: 4 sprites arranged **horizontally** in the texture atlas, each `w+3` px apart:
 
 | Offset | State |
 |--------|-------|
@@ -179,7 +188,9 @@ No extra fields.
 | `[u+(w+3)*2, v, w, h]` | Scroll up |
 | `[u+(w+3)*3, v, w, h]` | Scroll down |
 
-The neutral state is drawn first, then the middle-button and scroll states are drawn on top as needed. The scroll state is shown only if a scroll event occurred within the last 150 ms.
+The neutral state is drawn first, then the middle-button and scroll states are drawn on top as needed. The scroll state is shown only if a scroll event occurred within the last 200 ms.
+
+**Input source**: Windows Raw Input API (global capture).
 
 ---
 
@@ -309,18 +320,20 @@ Only the center sprite (neutral) is drawn when no direction is active. One of th
 
 ---
 
-### Type 9 — `ET_MOUSE_MOVEMENT` (mouse movement indicator) — **Not supported**
+### Type 9 — `ET_MOUSE_MOVEMENT` (mouse movement indicator) — **Supported**
 
 | Field | Type | Description |
 |-------|------|-------------|
-| `mouse_radius` | integer | Maximum pixel offset from center (dot mode) or ignored (arrow mode) |
-| `mouse_type` | integer | `0` = dot (sprite moves within radius), `1` = arrow (sprite rotates to point in movement direction) |
+| `mouse_radius` | integer | Maximum pixel offset from center position (used in Move mode) |
+| `mouse_type` | integer | `0` = Move (sprite translates within radius), `1` = Point (sprite rotates to face movement direction) |
 
-**Dot mode** (`mouse_type: 0`): The sprite is drawn offset from `pos` by up to `mouse_radius` pixels, scaled to recent mouse movement delta and clamped to `[-1, 1]` by `mouse_sens`.
+**Move mode** (`mouse_type: 0`): The sprite is drawn offset from `pos` by `(moveDelta.x × mouse_radius, moveDelta.y × mouse_radius)` pixels, where `moveDelta` is the normalised `[-1, 1]` movement vector for the current tick.
 
-**Arrow mode** (`mouse_type: 1`): The sprite is drawn at `pos` rotated by the angle of the recent mouse movement vector.
+**Point mode** (`mouse_type: 1`): The sprite is drawn at `pos` rotated by `atan2(moveDelta.y, moveDelta.x)` radians. When there is no movement the sprite is drawn without rotation.
 
-Both modes apply a deadzone (`mouse_deadzone`) below which movement is ignored.
+The movement delta is normalised by dividing raw pixel deltas by a configurable sensitivity value (URL parameter `mouse_sens`, default `500`). Larger values make the indicator less sensitive.
+
+**Input source**: Windows Raw Input API (global capture).
 
 ---
 

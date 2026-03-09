@@ -50,6 +50,25 @@ func (h *Hub) BroadcastToPlayer(msg []byte, playerIndex int) {
 	}
 }
 
+// BroadcastKeyMouse sends a message to all clients that have subscribed to keyboard/mouse events.
+func (h *Hub) BroadcastKeyMouse(msg []byte) {
+	h.mu.RLock()
+	defer h.mu.RUnlock()
+
+	for client := range h.clients {
+		if client.wantsKeyMouse.Load() == 1 {
+			select {
+			case client.send <- msg:
+			default:
+				// Client send buffer full, disconnect
+				go func(c *Client) {
+					h.unregister <- c
+				}(client)
+			}
+		}
+	}
+}
+
 // Run starts the hub's main loop. Should be run in a goroutine.
 func (h *Hub) Run() {
 	for {

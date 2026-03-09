@@ -1,6 +1,6 @@
 # InputView
 
-Go backend reads gamepad input via SDL3, pushes to frontend via WebSocket, and renders real-time gamepad visualization on Canvas.
+Go backend reads gamepad input via SDL3 and keyboard/mouse input via Windows Raw Input API, pushes to frontend via WebSocket, and renders real-time gamepad/keyboard/mouse visualization on Canvas.
 
 ## Language Conventions
 - Documentation uses markdown format
@@ -36,6 +36,7 @@ Requires **SDL3.dll** (>= 3.2.0) in the same directory as the executable or in s
 | `simple` | Simple mode (transparent background, no UI) | `?simple=1` |
 | `alpha` | Gamepad opacity (0.0-1.0) | `?alpha=0.5` |
 | `overlay` | Input Overlay config name (enables texture-atlas renderer) | `?overlay=dualsense` |
+| `mouse_sens` | Mouse movement sensitivity divisor (default 500; lower = more sensitive) | `?mouse_sens=300` |
 
 ## Project Structure
 
@@ -60,6 +61,12 @@ InputView/
     ├── console/
     │   ├── console_windows.go          # Windows console detection & Ctrl+C handler (reusable)
     │   └── console_other.go            # Stub for non-Windows platforms
+    ├── input/
+    │   ├── state.go                    # KeyMouseState data model, KeyMouseDelta, ComputeKeyMouseDelta()
+    │   └── keycode.go                  # Windows Raw Input scancode → uiohook scancode mapping
+    ├── rawinput/
+    │   ├── rawinput_windows.go         # Windows Raw Input API: global keyboard/mouse capture (HWND_MESSAGE + RIDEV_INPUTSINK)
+    │   └── rawinput_other.go           # Stub for non-Windows platforms
     ├── gamepad/
     │   ├── state.go                    # GamepadState data model (includes PlayerIndex)
     │   ├── mapping.go                  # Device mapping types & GetMapping() function
@@ -117,6 +124,16 @@ goroutine: Hub.Run()           ← Manage WebSocket client connections
 goroutine: HTTP Server         ← Static files + WebSocket endpoint, graceful shutdown
 ```
 
+```
+goroutine: rawinput.Reader.Run(ctx)  ← Windows Raw Input API (HWND_MESSAGE window + RIDEV_INPUTSINK)
+                                            ↓ WM_INPUT events (keyboard + mouse, global capture)
+                                     internal state accumulation (mutex-protected)
+                                            ↓ ~60Hz emitter goroutine
+                                     chan KeyMouseState
+                                            ↓
+goroutine: Broadcaster.Run()         ← Also listens on kmChanges channel, broadcasts to km-subscribed clients
+```
+
 **SDL Initialization Callback**: On Windows, a callback is invoked after SDL initialization to re-register the console control handler (SDL3 overrides it during init). Use `reader.SetOnSDLInitCallback(func())` to set platform-specific post-init behavior.
 
 ### Signal Handling
@@ -157,6 +174,14 @@ Broadcaster: BroadcastToPlayer(msg, n)
 Hub: Only send to clients with playerIndex == n
 ```
 
+### Raw Input Implementation Notes
+
+- `RIM_TYPEMOUSE = 0`, `RIM_TYPEKEYBOARD = 1` (from winuser.h). The constants in `rawinput_windows.go` must match exactly — swapping them causes all mouse events to be silently discarded.
+- `Client.wantsKeyMouse` is accessed from two goroutines (ReadPump writes, BroadcastKeyMouse reads); use `atomic.Int32` to avoid data race.
+- Arrow rotation for `mouse_movement` Point mode (type 9): sprite faces **up** by default, so angle formula is `Math.atan2(mx, -my)` (not the standard `atan2(y, x)`).
+- Mouse button codes use `uint16` (not `uint8`) throughout — Go's `encoding/json` serializes `[]uint8` as a base64 string rather than a JSON number array, silently breaking frontend parsing.
+- `KeyMouseState` carries `PendingKeysDown/Up` and `PendingButtonsDown/Up` slices (tagged `json:"-"`) to capture button events that occur and complete within a single 16ms tick. `ComputeKeyMouseDelta` uses these pending lists when non-nil, falling back to prev/curr state comparison otherwise.
+
 ### Using Joystick Low-Level API (Not Gamepad)
 
 Intentionally uses SDL3 Joystick low-level API instead of Gamepad high-level API to avoid conflicts with other applications or games. Joystick API directly reads HID device data, requiring manual maintenance of axis/button index to semantic name mappings (see `mapping.go`).
@@ -167,10 +192,13 @@ Intentionally uses SDL3 Joystick low-level API instead of Gamepad high-level API
 - `full`: Complete state snapshot (sent on new client connect, every 5 seconds, and after every 100 deltas)
 - `delta`: Only changed fields (regular updates)
 - `player_selected`: Confirm gamepad switch success
+- `km_full`: Complete keyboard/mouse state snapshot (sent when client subscribes)
+- `km_delta`: Keyboard/mouse incremental update (keys down/up, buttons, mouse move, wheel)
 - All messages include `seq` (incrementing sequence number) and `timestamp` (millisecond timestamp)
 
 **Client → Server:**
 - `select_player`: Select gamepad number to listen to
+- `subscribe_km`: Subscribe to keyboard/mouse event stream (automatically sent when overlay config contains km element types)
 
 ```json
 // Client sends
@@ -229,9 +257,13 @@ Two rendering engines coexist in `app.js`, selected by the `?overlay=` URL param
 | Built-in geometric | Canvas shapes (SVG path / rounded rects) |
 | Input Overlay (`?overlay=<name>`) | Texture atlas (PNG sprite sheet) |
 
-**Supported element types:** texture (0), gamepad_button (2), analog_stick (5), trigger (6), gamepad_id (7), dpad (8)
+**Supported element types:** texture (0), keyboard_button (1), gamepad_button (2), mouse_button (3), mouse_wheel (4), analog_stick (5), trigger (6), gamepad_id (7), dpad (8), mouse_movement (9)
+
+**Canvas sizing**: In overlay mode, `canvasW`/`canvasH` are set to `overlay_width`/`overlay_height` from the config once loaded, and overlay elements are rendered at 1:1 pixel coordinates with no scaling. In simple mode (`?simple=1`) the canvas is stretched to fill the viewport while preserving aspect ratio. In geometric mode the canvas stays at the fixed 500×330 logical size.
 
 **Simple mode** (`?simple=1`): makes the page background transparent. In Input Overlay mode, type=0 static texture elements (controller body) are always rendered — the controller outline is part of the atlas, not the page background.
+
+**Keyboard/mouse-only overlays**: if the config contains no gamepad element types (2/5/6/7/8), the Player info bar and controller status bar are hidden, `select_player` is not sent, and rendering starts immediately without waiting for a gamepad connection.
 
 Presets are served from `overlays/<name>/` next to the executable (mounted at `/overlays/`). See [docs/input-overlay-format.md](docs/input-overlay-format.md) for full format specification.
 

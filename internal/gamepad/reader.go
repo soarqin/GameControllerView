@@ -102,6 +102,14 @@ type Reader struct {
 	// hidDevices caches per-device HID capability info.
 	// Only accessed under r.mu.
 	hidDevices map[uintptr]*hidDeviceInfo
+
+	// disconnectedHIDs records HID device handles that have been explicitly
+	// disconnected via WM_INPUT_DEVICE_CHANGE (GIDC_REMOVAL). Residual WM_INPUT
+	// events that arrive after disconnection are suppressed using this set,
+	// preventing the fallback path in handleHIDInput from re-registering a
+	// device that has already been removed.
+	// Only accessed under r.mu.
+	disconnectedHIDs map[uintptr]struct{}
 }
 
 // joystickInfo holds per-device metadata for a connected controller.
@@ -117,9 +125,10 @@ type joystickInfo struct {
 // NewReader creates a new Reader.
 func NewReader() *Reader {
 	return &Reader{
-		joysticks:  make(map[joystickKey]*joystickInfo),
-		hidDevices: make(map[uintptr]*hidDeviceInfo),
-		changes:    make(chan GamepadState, 64),
+		joysticks:        make(map[joystickKey]*joystickInfo),
+		hidDevices:       make(map[uintptr]*hidDeviceInfo),
+		disconnectedHIDs: make(map[uintptr]struct{}),
+		changes:          make(chan GamepadState, 64),
 	}
 }
 

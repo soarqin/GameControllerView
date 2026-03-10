@@ -46,6 +46,10 @@ InputView/
 ├── go.sum
 ├── build.ps1                           # Windows release build script (-tags release, -H=windowsgui)
 ├── build.sh                            # Linux/macOS release build script (-tags release)
+├── CHANGELOG.md                        # Version history (Keep a Changelog format)
+├── .github/
+│   └── workflows/
+│       └── release.yml                 # GitHub Actions: build & publish release on git tag push
 ├── docs/
 │   ├── input-overlay-format.md        # Input Overlay config format specification
 │   ├── gpvskin2overlay.md             # GPV skin converter build & usage guide
@@ -218,7 +222,9 @@ Non-XInput HID gamepads (PS4/PS5/Switch Pro/generic) are captured via the **same
 
 **Callback registration**: `rawinput.Reader.RegisterHIDCallback(usagePage, usage, inputCb, changeCb)` stores the callback and registers the HID device class. HID events (`rimTypeHID`, dwType=2) are routed to matching callbacks via `routeHIDInput()`. Device changes (`WM_INPUT_DEVICE_CHANGE`) are routed via `handleDeviceChange()`.
 
-**Device info cache**: Usage page/usage per hDevice is cached in `hidDeviceCache` (map[uintptr]hidDeviceUsage) to avoid calling `GetRawInputDeviceInfoW` on every WM_INPUT event. Cache entries are evicted on `GIDC_REMOVAL`.
+**Device info cache**: Usage page/usage per hDevice is cached in `hidDeviceCache` (map[uintptr]hidDeviceUsage) to avoid calling `GetRawInputDeviceInfoW` on every WM_INPUT event. On `GIDC_REMOVAL`, the cache entry is read first (to route the disconnect callback) and then deleted — the handle is never re-queried after removal to prevent stale re-population.
+
+**Disconnected HID handle blocklist**: `gamepad.Reader` maintains a `disconnectedHIDs` set (map[uintptr]struct{}). When `handleHIDDeviceChange` receives `GIDC_REMOVAL`, the handle is added to this set. `handleHIDInput` checks the set before processing any WM_INPUT event and discards residual events for disconnected handles. The handle is removed from the set on the next `GIDC_ARRIVAL` for the same handle value, allowing re-connection to work correctly.
 
 **XInput filtering**: XInput creates a virtual HID device for each Xbox controller. These are identified by `IG_` in the device name (from `GetRawInputDeviceInfoW(RIDI_DEVICENAME)`). `isXInputDevice()` in `hidinput_windows.go` checks for this prefix — matching devices are skipped in the HID path to prevent double-reporting.
 

@@ -643,15 +643,23 @@ func (r *Reader) handleDeviceChange(wParam, lParam uintptr) {
 	hDevice := lParam
 	added := wParam == giahDeviceArrival
 
+	var usage hidDeviceUsage
 	if !added {
-		// Remove from cache on departure.
+		// For removal: read usage from cache before deleting it, so we can
+		// route to the correct callback without re-querying the OS (which
+		// would re-populate the cache for a stale handle and allow residual
+		// WM_INPUT events to re-register the disconnected device).
+		usage = r.hidDeviceCache[hDevice]
 		delete(r.hidDeviceCache, hDevice)
-	}
-
-	// Look up usage page/usage for this device.
-	usage := r.resolveDeviceUsage(hDevice)
-	if usage.usagePage == 0 {
-		return // unknown device type
+		if usage.usagePage == 0 {
+			return // device was never tracked; nothing to do
+		}
+	} else {
+		// For arrival: look up (and cache) usage page/usage for this device.
+		usage = r.resolveDeviceUsage(hDevice)
+		if usage.usagePage == 0 {
+			return // unknown device type
+		}
 	}
 
 	// Route to matching callbacks.

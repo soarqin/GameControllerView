@@ -210,6 +210,16 @@ func convertXInputState(xs *xinputState, info *joystickInfo) GamepadState {
 // WM_INPUT event from a registered HID gamepad device.
 func (r *Reader) handleHIDInput(hDevice uintptr, rawData []byte, reportSize uint32) {
 	r.mu.Lock()
+
+	// Suppress residual WM_INPUT events that arrive after a GIDC_REMOVAL
+	// notification.  Without this guard the fallback registration path below
+	// would re-add the device to the joystick list even though it has already
+	// been disconnected.
+	if _, wasDisconnected := r.disconnectedHIDs[hDevice]; wasDisconnected {
+		r.mu.Unlock()
+		return
+	}
+
 	dev := r.getOrInitHIDDevice(hDevice)
 	if dev == nil || dev.isXInput || dev.isInvalid {
 		r.mu.Unlock()
@@ -259,6 +269,9 @@ func (r *Reader) handleHIDInput(hDevice uintptr, rawData []byte, reportSize uint
 func (r *Reader) handleHIDDeviceChange(added bool, hDevice uintptr) {
 	if added {
 		r.mu.Lock()
+		// Device (re-)connected: remove from the disconnected-handle blocklist
+		// so that handleHIDInput can re-register it on the next WM_INPUT event.
+		delete(r.disconnectedHIDs, hDevice)
 		dev := r.getOrInitHIDDevice(hDevice)
 		if dev == nil || dev.isXInput || dev.isInvalid {
 			r.mu.Unlock()
@@ -278,6 +291,9 @@ func (r *Reader) handleHIDDeviceChange(added bool, hDevice uintptr) {
 		key := hidKey(hDevice)
 		r.mu.Lock()
 		delete(r.hidDevices, hDevice)
+		// Record as disconnected so that residual WM_INPUT events arriving after
+		// this GIDC_REMOVAL notification do not trigger a spurious re-registration.
+		r.disconnectedHIDs[hDevice] = struct{}{}
 		r.mu.Unlock()
 		r.disconnectJoystick(key)
 	}

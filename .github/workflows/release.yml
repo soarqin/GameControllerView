@@ -1,0 +1,78 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - 'v*'
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    runs-on: windows-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+
+      - name: Build InputView.exe
+        run: go build -tags release -ldflags "-s -w -H=windowsgui" -o InputView.exe ./cmd/inputview
+
+      - name: Build gpvskin2overlay.exe
+        run: go build -ldflags "-s -w" -o gpvskin2overlay.exe ./cmd/gpvskin2overlay
+
+      - name: Extract changelog for this version
+        id: changelog
+        shell: pwsh
+        run: |
+          $tag = "${{ github.ref_name }}"
+          $version = $tag.TrimStart('v')
+          $content = Get-Content CHANGELOG.md -Raw
+
+          # Match the section for this version: from "## [x.y.z]" to the next "## [" or end of file
+          $pattern = "(?ms)^## \[$([regex]::Escape($version))\][^\n]*\n(.*?)(?=^## \[|\z)"
+          if ($content -match $pattern) {
+            $notes = $Matches[1].Trim()
+          } else {
+            $notes = ""
+          }
+
+          if (-not $notes) {
+            $notes = "See [CHANGELOG.md](https://github.com/${{ github.repository }}/blob/$tag/CHANGELOG.md) for details."
+          }
+
+          # Write to file to avoid multiline env var issues
+          Set-Content -Path release_notes.txt -Value $notes -NoNewline
+          echo "has_notes=$(if ($notes) { 'true' } else { 'false' })" >> $env:GITHUB_OUTPUT
+
+      - name: Create release archive
+        shell: pwsh
+        run: |
+          $tag = "${{ github.ref_name }}"
+          $archiveName = "InputView-$tag-windows-amd64.zip"
+
+          Compress-Archive -Path @(
+            "CHANGELOG.md",
+            "README.md",
+            "README.zhCN.md",
+            "LICENSE",
+            "InputView.exe",
+            "gpvskin2overlay.exe",
+            "docs"
+          ) -DestinationPath $archiveName
+
+          echo "ARCHIVE_NAME=$archiveName" >> $env:GITHUB_ENV
+
+      - name: Publish GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          body_path: release_notes.txt
+          files: ${{ env.ARCHIVE_NAME }}
+          draft: false
+          prerelease: ${{ contains(github.ref_name, '-') }}

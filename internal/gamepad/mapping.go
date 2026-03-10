@@ -25,6 +25,16 @@ type DeviceMapping struct {
 	Axes    []AxisMapping
 	Buttons []ButtonMapping
 	HasHat  bool
+
+	// HID-specific fields (used when the device is accessed via Raw Input HID,
+	// not XInput). If HIDAxes is nil, a generic default axis assignment is used.
+	// Keys are HID usage codes (e.g. 0x30 = X, 0x31 = Y, 0x32 = Z, etc.).
+	// Values are semantic target names matching the XInput conventions.
+	HIDAxes map[uint16]string // HID usage → "left_x"/"left_y"/"right_x"/"right_y"/"lt"/"rt"
+
+	// HIDButtons maps 1-based HID button usage numbers to button target names.
+	// If nil, buttons are assigned in order: a, b, x, y, lb, rb, back, start, guide, ls, rs.
+	HIDButtons map[uint16]string // 1-based button usage → "a"/"b"/"x"/"y"/"lb"/"rb"/etc.
 }
 
 // normalizeAxis converts a raw axis value (-32768..32767) to -1.0..1.0.

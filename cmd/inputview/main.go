@@ -36,8 +36,14 @@ func main() {
 	h := hub.NewHub()
 	go h.Run()
 
-	// Create Raw Input reader for keyboard and mouse (Windows: global capture via Raw Input API)
+	// Create Raw Input reader for keyboard and mouse (Windows: global capture via Raw Input API).
+	// Also used as the shared HWND_MESSAGE window for HID gamepad input.
 	kmReader := rawinput.New()
+
+	// Register HID gamepad callbacks on the Raw Input window so that non-XInput
+	// controllers (PS4/PS5/Switch Pro/generic HID) are captured alongside XInput.
+	// Must be called before kmReader.Run().
+	reader.SetRawInputReader(kmReader)
 
 	// Create broadcaster (listens to both gamepad and keyboard/mouse channels)
 	broadcaster := hub.NewBroadcaster(h, reader.Changes(), kmReader.Changes())

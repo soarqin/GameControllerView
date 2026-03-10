@@ -61,12 +61,17 @@ func (t *Tray) handleMenuClicks() {
 		select {
 		case <-t.menuOpen.ClickedCh:
 			if !t.shuttingDown.Load() {
-				t.openBrowser()
+				// Run openBrowser in a separate goroutine so that this select
+				// loop is never blocked. On Windows, exec.Command(...).Start()
+				// can stall under certain conditions (e.g. antivirus scanning,
+				// disk pressure), which would prevent ClickedCh from being
+				// drained and cause all subsequent menu clicks to be silently
+				// dropped by systray's non-blocking send.
+				go t.openBrowser()
 			}
 		case <-t.menuExit.ClickedCh:
 			if t.shuttingDown.CompareAndSwap(false, true) {
 				t.once.Do(t.shutdownFunc)
-				// Small delay to ensure shutdown function completes
 				systray.Quit()
 				return
 			}

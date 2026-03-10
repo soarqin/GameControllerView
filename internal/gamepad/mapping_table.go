@@ -25,18 +25,99 @@ var playStationBaseButtons = []ButtonMapping{
 	{Index: 10, Target: "rb"}, // R1
 }
 
-// newPlayStationMapping creates a PlayStation mapping with optional extra buttons.
-// PS5 adds button 11 (touchpad), PS3/PS4 don't have it.
-func newPlayStationMapping(name string, extraButtons ...ButtonMapping) *DeviceMapping {
+// HID axis mapping for PlayStation controllers (DualShock 4, DualSense).
+// PS HID report: X=left_x, Y=left_y, Z=right_x, Rz=right_y, Rx=lt, Ry=rt.
+// (Note: PS controllers use Z for right-stick X and Rz for right-stick Y, which
+// differs from the generic default that assigns Z to the right trigger.)
+var playStationHIDAxes = map[uint16]string{
+	hidUsageX:  "left_x",
+	hidUsageY:  "left_y",
+	hidUsageZ:  "right_x",
+	hidUsageRx: "lt",
+	hidUsageRy: "rt",
+	hidUsageRz: "right_y",
+}
+
+// HID button mapping for PlayStation controllers (1-based usage index).
+// PS HID button order: Square(1) Cross(2) Circle(3) Triangle(4) L1(5) R1(6)
+// L2(7) R2(8) Share/Create(9) Options(10) L3(11) R3(12) PS(13) [Touchpad(14) — PS5 only]
+var playStationHIDButtons = map[uint16]string{
+	1:  "x",     // Square  → X (visual square button)
+	2:  "a",     // Cross   → A (confirm)
+	3:  "b",     // Circle  → B (back)
+	4:  "y",     // Triangle→ Y
+	5:  "lb",    // L1
+	6:  "rb",    // R1
+	7:  "lt",    // L2 (digital — analog value comes from axis)
+	8:  "rt",    // R2 (digital — analog value comes from axis)
+	9:  "back",  // Share / Create
+	10: "start", // Options
+	11: "ls",    // L3
+	12: "rs",    // R3
+	13: "guide", // PS button
+}
+
+var playStation5HIDButtons = map[uint16]string{
+	1:  "x",
+	2:  "a",
+	3:  "b",
+	4:  "y",
+	5:  "lb",
+	6:  "rb",
+	7:  "lt",
+	8:  "rt",
+	9:  "back",
+	10: "start",
+	11: "ls",
+	12: "rs",
+	13: "guide",
+	14: "touchpad",
+}
+
+// HID axis mapping for Nintendo Switch Pro Controller.
+// Switch Pro HID: X=left_x, Y=left_y, Z=right_x, Rz=right_y.
+// Triggers are digital-only buttons (no analog HID axis).
+var switchProHIDAxes = map[uint16]string{
+	hidUsageX:  "left_x",
+	hidUsageY:  "left_y",
+	hidUsageZ:  "right_x",
+	hidUsageRz: "right_y",
+}
+
+// HID button mapping for Nintendo Switch Pro Controller.
+// Switch Pro HID button order: B(1) A(2) Y(3) X(4) L(5) R(6) ZL(7) ZR(8)
+// Minus(9) Plus(10) LS(11) RS(12) Home(13) Capture(14)
+var switchProHIDButtons = map[uint16]string{
+	1:  "a",       // B → A (confirm on Switch)
+	2:  "b",       // A → B (back on Switch)
+	3:  "x",       // Y → X (left face)
+	4:  "y",       // X → Y (top face)
+	5:  "lb",      // L
+	6:  "rb",      // R
+	7:  "lt",      // ZL (digital trigger)
+	8:  "rt",      // ZR (digital trigger)
+	9:  "back",    // Minus
+	10: "start",   // Plus
+	11: "ls",      // Left stick click
+	12: "rs",      // Right stick click
+	13: "guide",   // Home
+	14: "capture", // Capture
+}
+
+// newPlayStationMapping creates a PlayStation mapping with optional extra buttons
+// and HID-specific axis/button maps. PS5 adds button 11 (touchpad).
+func newPlayStationMapping(name string, hidButtons map[uint16]string, extraButtons ...ButtonMapping) *DeviceMapping {
 	buttons := make([]ButtonMapping, len(playStationBaseButtons)+len(extraButtons))
 	copy(buttons, playStationBaseButtons)
 	copy(buttons[len(playStationBaseButtons):], extraButtons)
 
 	return &DeviceMapping{
-		Name:    name,
-		Axes:    playStationAxes,
-		Buttons: buttons,
-		HasHat:  true,
+		Name:       name,
+		Axes:       playStationAxes,
+		Buttons:    buttons,
+		HasHat:     true,
+		HIDAxes:    playStationHIDAxes,
+		HIDButtons: hidButtons,
 	}
 }
 
@@ -68,9 +149,9 @@ var xboxMapping = &DeviceMapping{
 	HasHat: true,
 }
 
-var playstationMapping = newPlayStationMapping("playstation")
+var playstationMapping = newPlayStationMapping("playstation", playStationHIDButtons)
 
-var playstation5Mapping = newPlayStationMapping("playstation5", ButtonMapping{Index: 11, Target: "touchpad"})
+var playstation5Mapping = newPlayStationMapping("playstation5", playStation5HIDButtons, ButtonMapping{Index: 11, Target: "touchpad"})
 
 var switchProMapping = &DeviceMapping{
 	Name: "switch_pro",
@@ -96,7 +177,9 @@ var switchProMapping = &DeviceMapping{
 		{Index: 10, Target: "rb"},
 		{Index: 11, Target: "capture"},
 	},
-	HasHat: true,
+	HasHat:     true,
+	HIDAxes:    switchProHIDAxes,
+	HIDButtons: switchProHIDButtons,
 }
 
 // Known vendor/product IDs.

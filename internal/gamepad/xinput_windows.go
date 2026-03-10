@@ -7,25 +7,43 @@ import (
 	"unsafe"
 )
 
+var (
+	kernel32           = syscall.NewLazyDLL("kernel32.dll")
+	procGetProcAddress = kernel32.NewProc("GetProcAddress")
+)
+
+// getProcAddressByOrdinal calls GetProcAddress(hModule, MAKEINTRESOURCE(ordinal)).
+// syscall.GetProcAddress only accepts string names; it cannot do ordinal lookup.
+// Windows GetProcAddress treats lpProcName as an ordinal when the high word is 0.
+func getProcAddressByOrdinal(module uintptr, ordinal uintptr) uintptr {
+	addr, _, _ := procGetProcAddress.Call(module, ordinal)
+	return addr
+}
+
 // XInput DLL loading with fallback chain: xinput1_4 (Win8+) → xinput1_3 (Win7) → xinput9_1_0 (Vista)
 var (
-	modXInput                   *syscall.LazyDLL
-	procXInputGetState          *syscall.LazyProc
-	procXInputGetCapabilities   *syscall.LazyProc
-	procXInputGetStateEx        *syscall.LazyProc // ordinal 100: includes Guide button
-	procXInputGetCapabilitiesEx *syscall.LazyProc // ordinal 108: includes VID/PID (undocumented, Win8+)
+	modXInput                 *syscall.LazyDLL
+	procXInputGetState        *syscall.LazyProc
+	procXInputGetCapabilities *syscall.LazyProc
+
+	// Ordinal-based procs resolved via GetProcAddress(hModule, MAKEINTRESOURCE(ordinal)).
+	// syscall.LazyProc does not support ordinal lookup ("#100" is treated as a literal name),
+	// so these are resolved manually at init time.
+	addrXInputGetStateEx        uintptr // ordinal 100: includes Guide button
+	addrXInputGetCapabilitiesEx uintptr // ordinal 108: includes VID/PID (undocumented, Win8+)
 )
 
 func init() {
 	modXInput = loadXInputDLL()
 	procXInputGetState = modXInput.NewProc("XInputGetState")
 	procXInputGetCapabilities = modXInput.NewProc("XInputGetCapabilities")
-	// Ordinal 100: XInputGetStateEx — same as XInputGetState but Buttons includes Guide (0x0400).
-	// Available since xinput1_3.dll; silently falls back if unavailable.
-	procXInputGetStateEx = modXInput.NewProc("#100")
-	// Ordinal 108: XInputGetCapabilitiesEx — extends XINPUT_CAPABILITIES with VID/PID.
-	// Only present in xinput1_4.dll (Windows 8+); may not exist on older systems.
-	procXInputGetCapabilitiesEx = modXInput.NewProc("#108")
+
+	// Resolve ordinal-exported functions manually.
+	// GetProcAddress accepts MAKEINTRESOURCE(ordinal) = uintptr(ordinal) as the proc name
+	// (high word must be 0). These are undocumented APIs present since xinput1_3.dll / xinput1_4.dll.
+	h := modXInput.Handle() // forces DLL load
+	addrXInputGetStateEx = getProcAddressByOrdinal(h, 100)
+	addrXInputGetCapabilitiesEx = getProcAddressByOrdinal(h, 108)
 }
 
 // loadXInputDLL tries to load the best available XInput DLL.
@@ -110,8 +128,8 @@ type xinputCapabilitiesEx struct {
 // Falls back to XInputGetState if ordinal 100 is unavailable.
 func xiGetStateEx(userIndex uint32, state *xinputState) uint32 {
 	// Try the extended version first (includes Guide button)
-	if err := procXInputGetStateEx.Find(); err == nil {
-		ret, _, _ := procXInputGetStateEx.Call(
+	if addrXInputGetStateEx != 0 {
+		ret, _, _ := syscall.SyscallN(addrXInputGetStateEx,
 			uintptr(userIndex),
 			uintptr(unsafe.Pointer(state)),
 		)
@@ -129,13 +147,13 @@ func xiGetStateEx(userIndex uint32, state *xinputState) uint32 {
 // to obtain VID/PID. Returns (vendorID, productID, true) on success, or (0, 0, false)
 // if the ordinal is unavailable (e.g., on Windows 7 with xinput1_3.dll).
 func xiGetCapabilitiesEx(userIndex uint32) (vendorID, productID uint16, ok bool) {
-	if err := procXInputGetCapabilitiesEx.Find(); err != nil {
+	if addrXInputGetCapabilitiesEx == 0 {
 		return 0, 0, false
 	}
 	var capsEx xinputCapabilitiesEx
 	// Signature: DWORD XInputGetCapabilitiesEx(DWORD reserved, DWORD dwUserIndex, DWORD dwFlags, XINPUT_CAPABILITIES_EX* pCapabilities)
 	// reserved must be 1.
-	ret, _, _ := procXInputGetCapabilitiesEx.Call(
+	ret, _, _ := syscall.SyscallN(addrXInputGetCapabilitiesEx,
 		1, // reserved, must be 1
 		uintptr(userIndex),
 		0, // dwFlags (0 = all devices)

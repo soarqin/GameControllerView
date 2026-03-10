@@ -1,6 +1,6 @@
 # InputView
 
-Go backend reads gamepad input via Windows XInput API and keyboard/mouse input via Windows Raw Input API, pushes to frontend via WebSocket, and renders real-time gamepad/keyboard/mouse visualization on Canvas.
+Go backend reads gamepad input via Windows XInput API (Xbox-compatible controllers) and Windows Raw Input HID API (PS4/PS5/Switch Pro/generic HID gamepads), plus keyboard/mouse input via Windows Raw Input API, pushes to frontend via WebSocket, and renders real-time gamepad/keyboard/mouse visualization on Canvas.
 
 ## Language Conventions
 - Documentation uses markdown format
@@ -26,7 +26,7 @@ go build -tags release -ldflags "-s -w -H=windowsgui" -o InputView.exe ./cmd/inp
 # Open browser at http://localhost:8080
 ```
 
-No external DLL required. Gamepad input uses XInput (`xinput1_4.dll`), which is built into Windows 8+.
+No external DLL required. Gamepad input uses XInput (`xinput1_4.dll`, built into Windows 8+) for Xbox-compatible controllers and `hid.dll` (built into all Windows versions) for HID gamepads.
 
 ## URL Parameters
 
@@ -72,9 +72,11 @@ InputView/
     │   ├── mapping.go                  # Device mapping types & GetMapping() function
     │   ├── mapping_table.go            # VID/PID device mapping table (550+ entries)
     │   ├── reader.go                   # Reader struct: shared fields, Changes()/GetPlayerIndex()/SetActiveByPlayerIndex()
-    │   ├── reader_windows.go           # Windows implementation: XInput polling loop (~60Hz)
+    │   ├── reader_windows.go           # Windows implementation: XInput polling loop (~60Hz) + HID callback handling
     │   ├── reader_other.go             # Non-Windows stub (blocks until ctx cancel)
-    │   └── xinput_windows.go           # XInput API bindings (syscall): GetState, GetCapabilitiesEx (ordinal 108)
+    │   ├── xinput_windows.go           # XInput API bindings (syscall): GetState, GetStateEx (ordinal 100, Guide button), GetCapabilitiesEx (ordinal 108, VID/PID)
+    │   ├── hidinput_windows.go         # HID Raw Input: hid.dll bindings, device init, report parsing (axes/buttons/hat)
+    │   └── hidinput_other.go           # Stub for non-Windows platforms
     ├── hub/
     │   ├── hub.go                      # WebSocket hub: client management, targeted broadcast, main loop
     │   ├── client.go                   # WebSocket client: connection, read/write pumps, message handling
@@ -112,6 +114,10 @@ The server mounts this directory at `/overlays/`. Presets are **not** embedded i
 
 ## Architecture Highlights
 
+### XInput Ordinal Exports
+
+`XInputGetStateEx` (ordinal 100, includes Guide button) and `XInputGetCapabilitiesEx` (ordinal 108, includes VID/PID) are **undocumented ordinal-only exports** — they have no named symbol in the DLL. Go's `syscall.LazyProc` with `NewProc("#100")` does NOT perform ordinal lookup; it passes the literal string `"#100"` to `GetProcAddress`, which fails silently. The correct approach is to call the Windows `GetProcAddress` API directly with `MAKEINTRESOURCE(ordinal)` (i.e., pass the ordinal number as a raw `uintptr` for the `lpProcName` parameter, with high word = 0). See `getProcAddressByOrdinal()` in `xinput_windows.go`.
+
 ### Thread Model
 
 XInput is thread-safe and does not require `LockOSThread`. The gamepad reader runs as a plain goroutine.
@@ -137,6 +143,22 @@ goroutine: rawinput.Reader.Run(ctx)  ← Windows Raw Input API (HWND_MESSAGE win
 goroutine: Broadcaster.Run()         ← Also listens on kmChanges channel, broadcasts to km-subscribed clients
 ```
 
+The **same HWND_MESSAGE window** also handles HID gamepad events (WM_INPUT with dwType=RIM_TYPEHID):
+
+```
+goroutine: rawinput.Reader.Run(ctx)  ← HWND_MESSAGE window (OS-locked)
+   ├── WM_INPUT (keyboard)  → keyboard state accumulation
+   ├── WM_INPUT (mouse)     → mouse state accumulation
+   ├── WM_INPUT (HID)       → registered HID callbacks
+   │      └── gamepad.Reader.handleHIDInput()  ← runs on the rawinput goroutine
+   │             ↓ (non-XInput HID gamepads only)
+   │         parseHIDReport() via hid.dll HidP_* APIs
+   │             ↓
+   │         GamepadState → chan GamepadState (same channel as XInput)
+   └── WM_INPUT_DEVICE_CHANGE → registered device-change callbacks
+          └── gamepad.Reader.handleHIDDeviceChange()
+```
+
 ### Signal Handling
 
 - Captures `os.Interrupt` (Ctrl+C) and `syscall.SIGTERM`
@@ -153,8 +175,9 @@ goroutine: Broadcaster.Run()         ← Also listens on kmChanges channel, broa
 ### Multi-Gamepad Support
 
 Reader maintains a list of connected gamepads (sorted by connection order):
-- `joystickOrder`: Gamepad connection order (list of XInput user indices 0-3)
-- `activeIndex`: XInput user index of the currently active gamepad
+- `joystickOrder`: Gamepad connection order (list of `joystickKey` values)
+- `activeKey`: Unified key of the currently active gamepad
+- `joystickKey`: A `uint64` that unifies XInput slots (0-3) and HID device handles. XInput slots use values 0-3 directly; HID device handles are stored as-is (kernel handles are always >= 4 and aligned, so they never collide with XInput slot values 0-3).
 - `GetPlayerIndex()`: Get the 1-based number of the current active gamepad
 - `SetActiveByPlayerIndex(n)`: Switch to the specified numbered gamepad
 
@@ -174,6 +197,8 @@ Broadcaster: BroadcastToPlayer(msg, n)
 Hub: Only send to clients with playerIndex == n
 ```
 
+**Critical**: `convertXInputState()` and `parseHIDReport()` build a fresh `GamepadState` from raw input data but do NOT set `PlayerIndex` (they only know about buttons/axes/triggers). The caller must set `PlayerIndex` on the returned state before storing and emitting. If `PlayerIndex` is 0 (zero-value), `BroadcastToPlayer` will never match any client (clients default to `playerIndex=1`), causing all input to be silently dropped.
+
 ### Raw Input Implementation Notes
 
 - `RIM_TYPEMOUSE = 0`, `RIM_TYPEKEYBOARD = 1` (from winuser.h). The constants in `rawinput_windows.go` must match exactly — swapping them causes all mouse events to be silently discarded.
@@ -181,6 +206,34 @@ Hub: Only send to clients with playerIndex == n
 - Arrow rotation for `mouse_movement` Point mode (type 9): sprite faces **up** by default, so angle formula is `Math.atan2(mx, -my)` (not the standard `atan2(y, x)`).
 - Mouse button codes use `uint16` (not `uint8`) throughout — Go's `encoding/json` serializes `[]uint8` as a base64 string rather than a JSON number array, silently breaking frontend parsing.
 - `KeyMouseState` carries `PendingKeysDown/Up` and `PendingButtonsDown/Up` slices (tagged `json:"-"`) to capture button events that occur and complete within a single 16ms tick. `ComputeKeyMouseDelta` uses these pending lists when non-nil, falling back to prev/curr state comparison otherwise.
+
+### HID Gamepad Input (Raw Input + hid.dll)
+
+Non-XInput HID gamepads (PS4/PS5/Switch Pro/generic) are captured via the **same HWND_MESSAGE window** as keyboard/mouse, by registering additional `RAWINPUTDEVICE` entries for `UsagePage=0x01, Usage=0x04` (Joystick) and `Usage=0x05` (Gamepad) with `RIDEV_INPUTSINK | RIDEV_DEVNOTIFY`.
+
+**Callback registration**: `rawinput.Reader.RegisterHIDCallback(usagePage, usage, inputCb, changeCb)` stores the callback and registers the HID device class. HID events (`rimTypeHID`, dwType=2) are routed to matching callbacks via `routeHIDInput()`. Device changes (`WM_INPUT_DEVICE_CHANGE`) are routed via `handleDeviceChange()`.
+
+**Device info cache**: Usage page/usage per hDevice is cached in `hidDeviceCache` (map[uintptr]hidDeviceUsage) to avoid calling `GetRawInputDeviceInfoW` on every WM_INPUT event. Cache entries are evicted on `GIDC_REMOVAL`.
+
+**XInput filtering**: XInput creates a virtual HID device for each Xbox controller. These are identified by `IG_` in the device name (from `GetRawInputDeviceInfoW(RIDI_DEVICENAME)`). `isXInputDevice()` in `hidinput_windows.go` checks for this prefix — matching devices are skipped in the HID path to prevent double-reporting.
+
+**Report parsing**: On each WM_INPUT for a HID gamepad, `parseHIDReport()` is called:
+1. `HidP_GetUsageValue` — reads each analog axis value using the `valueCaps` list
+2. Hat switch (usage 0x39) → mapped to `DpadState` using `hatDirTable` (0=N, 1=NE, … 7=NW, ≥8=center)
+3. `HidP_GetUsages` — returns the list of currently pressed button usages (1-based)
+4. Button usages → `GamepadState` fields via `resolveButtonTarget()` + `applyButton()`
+
+**Preparsed data**: Fetched once per device via `GetRawInputDeviceInfoW(RIDI_PREPARSEDDATA)` and cached in `hidDeviceInfo`. Required for all `HidP_*` calls. Allocation must be at least 8-byte aligned (Go's `make([]byte)` satisfies this on all supported architectures).
+
+**Axis normalization**: HID axis values are unsigned integers with `LogicalMin`/`LogicalMax` from value caps. `normalizeHIDAxis()` maps `[LogicalMin, LogicalMax]` to `[-1, 1]` for sticks or `[0, 1]` for triggers. Handles edge case where `LogicalMax < LogicalMin` due to sign-extension of a smaller type (detected via `BitSize`).
+
+**HID Y-axis direction**: HID Y axes are positive-downward. No inversion is applied in the HID path. XInput Y axes are positive-upward, but the frontend canvas renderer already inverts Y (`knobY = s.y - position.y * maxTravel`), so no backend inversion is applied in the XInput path either. Both paths pass `position.y` as-is; the frontend handles the canvas coordinate flip.
+
+**Device-specific mappings**: `DeviceMapping` now has two optional HID fields:
+- `HIDAxes map[uint16]string` — maps HID usage codes to semantic axis targets. If nil, `defaultHIDAxes` is used (covers most standard gamepads).
+- `HIDButtons map[uint16]string` — maps 1-based button usage numbers to button target names. If nil, `defaultButtonOrder` is used.
+- PS4/PS5: `playStationHIDAxes` (Z=right_x, Rz=right_y, Rx=lt, Ry=rt) — different from generic default which assigns Z to right trigger.
+- Switch Pro: `switchProHIDAxes` (Z=right_x, Rz=right_y, no analog triggers in HID report).
 
 ### WebSocket Message Protocol
 
@@ -207,10 +260,12 @@ Hub: Only send to clients with playerIndex == n
 ### Device Mapping System
 
 `mapping.go` matches known devices (Xbox, PlayStation, Switch Pro) via VID/PID, with generic fallback for unknown devices. Mappings define:
-- Axis index → stick/trigger correspondence
-- Button index → button name correspondence
+- Axis index → stick/trigger correspondence (XInput path)
+- Button index → button name correspondence (XInput path)
 - Axis value normalization range (sticks -1.0~1.0, triggers 0.0~1.0)
-- Whether Y-axis needs inversion
+- Whether Y-axis needs inversion (XInput path)
+- `HIDAxes map[uint16]string` — HID usage code → semantic axis target (HID path)
+- `HIDButtons map[uint16]string` — 1-based HID button usage → button name (HID path)
 
 ### Frontend Configuration System
 
@@ -243,6 +298,7 @@ Gamepad body outlines are defined in the `body` section of each config file. The
 The system tray provides menu access when running in GUI mode (double-clicked executable). Key points:
 - **Non-blocking menu handling**: Menu clicks processed in a dedicated goroutine to prevent Windows message loop deadlocks
 - **Atomic shutdown flag**: Prevents duplicate shutdown requests and race conditions
+- **`openBrowser` runs in its own goroutine**: `exec.Command(...).Start()` can stall on Windows under certain conditions (antivirus scanning, disk pressure). If `openBrowser` blocked inside `handleMenuClicks`, the select loop would stop draining `ClickedCh`; since `systray` uses a non-blocking send to that channel, all subsequent clicks would be silently dropped, causing the menu to become permanently unresponsive.
 
 ### Input Overlay Rendering
 

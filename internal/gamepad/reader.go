@@ -4,33 +4,53 @@ import (
 	"sync"
 )
 
+// joystickKey is a unified key for both XInput slots (0-3) and HID device handles.
+// XInput slots use values 0-3 directly.
+// HID device handles are stored as-is (kernel handles are always >= 4 and aligned,
+// so they never collide with XInput slot values 0-3).
+type joystickKey = uint64
+
+// xinputKey converts an XInput slot index (0-3) to a joystickKey.
+func xinputKey(slot uint32) joystickKey { return joystickKey(slot) }
+
+// hidKey converts a HID device handle to a joystickKey.
+func hidKey(hDevice uintptr) joystickKey { return joystickKey(hDevice) }
+
 // Reader reads gamepad input and emits state changes on a channel.
-// On Windows, it uses the XInput API (xinput1_4.dll / xinput1_3.dll).
-// On other platforms, it is a no-op stub pending future implementation.
+// On Windows, it uses XInput for Xbox-compatible controllers and Raw Input HID
+// for all other HID gamepads (PS4/PS5, Switch Pro, generic). On other platforms
+// it is a no-op stub pending future implementation.
 type Reader struct {
 	state         GamepadState
 	prevState     GamepadState
-	joysticks     map[uint32]*joystickInfo // key: XInput user index (0-3)
-	activeIndex   uint32                   // XInput user index of the active controller
+	joysticks     map[joystickKey]*joystickInfo // key: xinputKey(slot) or hidKey(hDevice)
+	activeKey     joystickKey                   // key of the active controller
 	hasActive     bool
-	joystickOrder []uint32 // connection order (XInput user indices)
+	joystickOrder []joystickKey // connection order
 	changes       chan GamepadState
 	mu            sync.RWMutex
+
+	// hidDevices caches per-device HID capability info.
+	// Only accessed under r.mu.
+	hidDevices map[uintptr]*hidDeviceInfo
 }
 
-// joystickInfo holds per-slot metadata for a connected XInput controller.
+// joystickInfo holds per-device metadata for a connected controller.
 type joystickInfo struct {
-	mapping *DeviceMapping
-	name    string
-	vidPID  string // "VID_XXXX&PID_XXXX" for logging; empty if unavailable
-	index   uint32 // XInput user index (0-3)
+	mapping    *DeviceMapping
+	name       string
+	vidPID     string  // "VID_XXXX&PID_XXXX" for logging; empty if unavailable
+	sourceType string  // "xinput" or "hid"
+	xinputSlot uint32  // XInput slot (0-3); only valid when sourceType=="xinput"
+	hDevice    uintptr // HID device handle; only valid when sourceType=="hid"
 }
 
 // NewReader creates a new Reader.
 func NewReader() *Reader {
 	return &Reader{
-		joysticks: make(map[uint32]*joystickInfo),
-		changes:   make(chan GamepadState, 64),
+		joysticks:  make(map[joystickKey]*joystickInfo),
+		hidDevices: make(map[uintptr]*hidDeviceInfo),
+		changes:    make(chan GamepadState, 64),
 	}
 }
 
@@ -43,8 +63,8 @@ func (r *Reader) Changes() <-chan GamepadState {
 func (r *Reader) GetPlayerIndex() int {
 	r.mu.RLock()
 	defer r.mu.RUnlock()
-	for i, idx := range r.joystickOrder {
-		if idx == r.activeIndex {
+	for i, key := range r.joystickOrder {
+		if key == r.activeKey {
 			return i + 1
 		}
 	}
@@ -59,14 +79,14 @@ func (r *Reader) SetActiveByPlayerIndex(playerIndex int) bool {
 		r.mu.Unlock()
 		return false
 	}
-	newIndex := r.joystickOrder[playerIndex-1]
-	info := r.joysticks[newIndex]
+	newKey := r.joystickOrder[playerIndex-1]
+	info := r.joysticks[newKey]
 	if info == nil {
 		r.mu.Unlock()
 		return false
 	}
 
-	r.activeIndex = newIndex
+	r.activeKey = newKey
 	r.hasActive = true
 	r.state.Connected = true
 	r.state.Name = info.name
@@ -89,4 +109,15 @@ func (r *Reader) emitState() {
 	default:
 		// Drop if channel is full to avoid blocking the polling goroutine.
 	}
+}
+
+// getPlayerIndexLocked returns the 1-based player index for a key.
+// Caller must hold r.mu (at least read lock).
+func (r *Reader) getPlayerIndexLocked(key joystickKey) int {
+	for i, k := range r.joystickOrder {
+		if k == key {
+			return i + 1
+		}
+	}
+	return 0
 }

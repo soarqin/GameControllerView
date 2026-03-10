@@ -3,6 +3,10 @@
 // Package rawinput provides a Windows Raw Input global keyboard and mouse reader.
 // It registers a hidden HWND_MESSAGE window and uses RIDEV_INPUTSINK so that input
 // is received even when the window is not in the foreground.
+//
+// The package also supports registering callbacks for HID devices (e.g. gamepads)
+// via RegisterHIDCallback, allowing other packages to receive raw HID input events
+// through the same HWND_MESSAGE window without creating an additional OS thread.
 package rawinput
 
 import (
@@ -37,13 +41,22 @@ const (
 
 	// RegisterRawInputDevices flags
 	ridevInputsink = 0x00000100 // receive events even when not in foreground
+	ridevDevnotify = 0x00002000 // receive WM_INPUT_DEVICE_CHANGE notifications
+	ridevRemove    = 0x00000001 // unregister a device
+	ridevNolegacy  = 0x00000030 // disable legacy messages (keyboard/mouse only)
 
 	// GetRawInputData command
 	ridInput = 0x10000003
 
+	// GetRawInputDeviceInfo commands
+	ridiDevicename    = 0x20000007
+	ridiDeviceinfo    = 0x2000000b
+	ridiPreparseddata = 0x20000005
+
 	// RAWINPUT type codes (from winuser.h)
 	rimTypeMouse    = 0
 	rimTypeKeyboard = 1
+	rimTypeHID      = 2 // generic HID device (gamepad, joystick, etc.)
 
 	// RAWKEYBOARD Flags bits
 	riKeyBreak = 0x01 // key released (make = 0x00)
@@ -55,6 +68,13 @@ const (
 
 	// WM_INPUT message identifier
 	wmInput = 0x00FF
+
+	// WM_INPUT_DEVICE_CHANGE message identifier (sent when RIDEV_DEVNOTIFY is set)
+	wmInputDeviceChange = 0x00FE
+
+	// wParam values for WM_INPUT_DEVICE_CHANGE
+	giahDeviceArrival = 1 // device arrived
+	giahDeviceRemoval = 2 // device removed
 
 	// WM_DESTROY message
 	wmDestroy = 0x0002
@@ -73,6 +93,7 @@ var (
 	procDefWindowProcW          = modUser32.NewProc("DefWindowProcW")
 	procRegisterRawInputDevices = modUser32.NewProc("RegisterRawInputDevices")
 	procGetRawInputData         = modUser32.NewProc("GetRawInputData")
+	procGetRawInputDeviceInfoW  = modUser32.NewProc("GetRawInputDeviceInfoW")
 	procGetMessage              = modUser32.NewProc("GetMessageW")
 	procTranslateMessage        = modUser32.NewProc("TranslateMessage")
 	procDispatchMessage         = modUser32.NewProc("DispatchMessageW")
@@ -134,24 +155,6 @@ type rawMouse struct {
 	ulExtraInformation uint32
 }
 
-// rawInput is the RAWINPUT structure (keyboard + mouse variant; we size for both).
-type rawInput struct {
-	header rawInputHeader
-	// The data union is at most sizeof(RAWMOUSE)=24 or sizeof(RAWKEYBOARD)=16 bytes.
-	// We allocate 32 bytes of padding to cover both.
-	data [32]byte
-}
-
-// rawInputMouse returns a pointer to the RAWMOUSE data within a rawInput.
-func (r *rawInput) rawInputMouse() *rawMouse {
-	return (*rawMouse)(unsafe.Pointer(&r.data[0]))
-}
-
-// rawInputKeyboard returns a pointer to the RAWKEYBOARD data within a rawInput.
-func (r *rawInput) rawInputKeyboard() *rawKeyboard {
-	return (*rawKeyboard)(unsafe.Pointer(&r.data[0]))
-}
-
 // msg is the MSG structure for the Windows message loop.
 type msg struct {
 	hwnd    uintptr
@@ -162,9 +165,38 @@ type msg struct {
 	pt      [2]int32
 }
 
+// HIDInputCallback is called from the message loop goroutine whenever a WM_INPUT
+// event arrives for a registered HID device (usage page / usage pair).
+// hDevice is the raw input device handle from RAWINPUTHEADER.hDevice.
+// rawData is the raw HID report bytes (RAWHID.bRawData, dwSizeHid bytes per report).
+// reportSize is the size in bytes of a single HID report.
+type HIDInputCallback func(hDevice uintptr, rawData []byte, reportSize uint32)
+
+// HIDDeviceChangeCallback is called from the message loop goroutine when a HID
+// device matching a registered usage page/usage is added or removed.
+// added is true for arrival, false for removal.
+type HIDDeviceChangeCallback func(added bool, hDevice uintptr)
+
+// hidRegistration stores a single HID callback registration.
+type hidRegistration struct {
+	usagePage uint16
+	usage     uint16
+	inputCb   HIDInputCallback
+	changeCb  HIDDeviceChangeCallback
+}
+
+// hidDeviceUsage caches the usage page/usage of a known HID device handle.
+type hidDeviceUsage struct {
+	usagePage uint16
+	usage     uint16
+}
+
 // Reader collects keyboard and mouse input via Windows Raw Input API.
 // It creates an invisible HWND_MESSAGE window and runs a Windows message loop on a
 // dedicated OS-locked goroutine. State is emitted to Changes() at ~60 Hz.
+//
+// Additional HID device types (e.g. gamepads) can be registered via RegisterHIDCallback;
+// their raw input events are routed to the provided callback on the same message loop thread.
 type Reader struct {
 	mu           sync.Mutex
 	keys         map[uint16]bool // uiohook scancode → currently held
@@ -185,16 +217,27 @@ type Reader struct {
 	hwnd               uintptr // set by message loop goroutine
 	hwndReady          chan struct{}
 	stopPostHwnd       uintptr // HWND to post WM_DESTROY to for clean shutdown
+
+	// HID callback registrations. Protected by hidMu.
+	// Written before Run() or via RegisterHIDCallback (which waits for hwndReady).
+	// Read only from the message loop goroutine (no lock needed there).
+	hidMu        sync.RWMutex
+	hidCallbacks []hidRegistration
+
+	// Cache of hDevice → usage page/usage, to avoid GetRawInputDeviceInfoW on
+	// every WM_INPUT. Only accessed from the message loop goroutine (no lock needed).
+	hidDeviceCache map[uintptr]hidDeviceUsage
 }
 
 // New creates a new Raw Input Reader with default settings.
 func New() *Reader {
 	return &Reader{
-		keys:         make(map[uint16]bool),
-		mouseButtons: make(map[uint16]bool),
-		sensitivity:  defaultMouseSensitivity,
-		changes:      make(chan input.KeyMouseState, 64),
-		hwndReady:    make(chan struct{}),
+		keys:           make(map[uint16]bool),
+		mouseButtons:   make(map[uint16]bool),
+		sensitivity:    defaultMouseSensitivity,
+		changes:        make(chan input.KeyMouseState, 64),
+		hwndReady:      make(chan struct{}),
+		hidDeviceCache: make(map[uintptr]hidDeviceUsage),
 	}
 }
 
@@ -212,6 +255,47 @@ func (r *Reader) SetMouseSensitivity(s float32) {
 // Changes returns the read-only channel that receives KeyMouseState snapshots at ~60 Hz.
 func (r *Reader) Changes() <-chan input.KeyMouseState {
 	return r.changes
+}
+
+// RegisterHIDCallback registers a callback to receive raw HID input events for the
+// specified usage page and usage (e.g. usagePage=0x01, usage=0x04 for Joystick;
+// usage=0x05 for Gamepad). Both inputCb and changeCb may be nil if not needed.
+//
+// If the message window is already running, the new HID device type is registered
+// immediately. Otherwise it will be registered when Run() starts.
+// Safe to call from any goroutine.
+func (r *Reader) RegisterHIDCallback(usagePage, usage uint16, inputCb HIDInputCallback, changeCb HIDDeviceChangeCallback) {
+	r.hidMu.Lock()
+	r.hidCallbacks = append(r.hidCallbacks, hidRegistration{
+		usagePage: usagePage,
+		usage:     usage,
+		inputCb:   inputCb,
+		changeCb:  changeCb,
+	})
+	r.hidMu.Unlock()
+
+	// If the window is already running, register the device immediately.
+	// We do a non-blocking check first so this path is fast when called before Run().
+	select {
+	case <-r.hwndReady:
+		// Window exists — register this usage right now.
+		hwnd := r.hwnd
+		if hwnd != 0 {
+			dev := rawInputDevice{
+				usUsagePage: usagePage,
+				usUsage:     usage,
+				dwFlags:     ridevInputsink | ridevDevnotify,
+				hwndTarget:  hwnd,
+			}
+			procRegisterRawInputDevices.Call(
+				uintptr(unsafe.Pointer(&dev)),
+				1,
+				uintptr(unsafe.Sizeof(rawInputDevice{})),
+			)
+		}
+	default:
+		// Window not yet created; Run() will register all pending callbacks at startup.
+	}
 }
 
 // Run starts the Raw Input message loop and the periodic state emitter.
@@ -237,6 +321,31 @@ func (r *Reader) Run(ctx context.Context) {
 		// Continue anyway — partial functionality is better than none
 	} else {
 		log.Printf("rawinput: registered keyboard+mouse with RIDEV_INPUTSINK on hwnd=0x%x", hwnd)
+	}
+
+	// Register any HID callbacks that were added before Run() started.
+	r.hidMu.RLock()
+	callbacks := make([]hidRegistration, len(r.hidCallbacks))
+	copy(callbacks, r.hidCallbacks)
+	r.hidMu.RUnlock()
+
+	for _, cb := range callbacks {
+		dev := rawInputDevice{
+			usUsagePage: cb.usagePage,
+			usUsage:     cb.usage,
+			dwFlags:     ridevInputsink | ridevDevnotify,
+			hwndTarget:  hwnd,
+		}
+		ret, _, regErr := procRegisterRawInputDevices.Call(
+			uintptr(unsafe.Pointer(&dev)),
+			1,
+			uintptr(unsafe.Sizeof(rawInputDevice{})),
+		)
+		if ret == 0 {
+			log.Printf("rawinput: failed to register HID usagePage=0x%02x usage=0x%02x: %v", cb.usagePage, cb.usage, regErr)
+		} else {
+			log.Printf("rawinput: registered HID usagePage=0x%02x usage=0x%02x with RIDEV_INPUTSINK|RIDEV_DEVNOTIFY", cb.usagePage, cb.usage)
+		}
 	}
 
 	// Start the periodic state emitter in a separate goroutine.
@@ -443,50 +552,187 @@ func (r *Reader) registerDevices(hwnd uintptr) error {
 }
 
 // wndProc is the Windows window procedure callback for the message-only window.
-// It handles WM_INPUT messages; all other messages are forwarded to DefWindowProc.
-func (r *Reader) wndProc(hwnd, msg, wParam, lParam uintptr) uintptr {
-	if msg != wmInput {
-		ret, _, _ := procDefWindowProcW.Call(hwnd, msg, wParam, lParam)
+// It handles WM_INPUT and WM_INPUT_DEVICE_CHANGE messages; all others go to DefWindowProc.
+// Called exclusively on the OS-locked message loop goroutine.
+func (r *Reader) wndProc(hwnd, msgID, wParam, lParam uintptr) uintptr {
+	switch msgID {
+	case wmInputDeviceChange:
+		r.handleDeviceChange(wParam, lParam)
+		ret, _, _ := procDefWindowProcW.Call(hwnd, msgID, wParam, lParam)
+		return ret
+
+	case wmInput:
+		// Determine required buffer size.
+		var size uint32
+		procGetRawInputData.Call(
+			lParam,
+			uintptr(ridInput),
+			0,
+			uintptr(unsafe.Pointer(&size)),
+			uintptr(unsafe.Sizeof(rawInputHeader{})),
+		)
+		if size == 0 || size > 4096 {
+			ret, _, _ := procDefWindowProcW.Call(hwnd, msgID, wParam, lParam)
+			return ret
+		}
+
+		// Allocate buffer and read data.
+		buf := make([]byte, size)
+		written, _, _ := procGetRawInputData.Call(
+			lParam,
+			uintptr(ridInput),
+			uintptr(unsafe.Pointer(&buf[0])),
+			uintptr(unsafe.Pointer(&size)),
+			uintptr(unsafe.Sizeof(rawInputHeader{})),
+		)
+		if written == 0 || written == ^uintptr(0) {
+			ret, _, _ := procDefWindowProcW.Call(hwnd, msgID, wParam, lParam)
+			return ret
+		}
+
+		// The RAWINPUT header is at the start of the buffer.
+		hdr := (*rawInputHeader)(unsafe.Pointer(&buf[0]))
+
+		switch hdr.dwType {
+		case rimTypeKeyboard:
+			// RAWKEYBOARD immediately follows RAWINPUTHEADER.
+			if len(buf) >= int(unsafe.Sizeof(rawInputHeader{}))+int(unsafe.Sizeof(rawKeyboard{})) {
+				kb := (*rawKeyboard)(unsafe.Pointer(&buf[unsafe.Sizeof(rawInputHeader{})]))
+				r.handleKeyboard(kb)
+			}
+		case rimTypeMouse:
+			// RAWMOUSE immediately follows RAWINPUTHEADER.
+			if len(buf) >= int(unsafe.Sizeof(rawInputHeader{}))+int(unsafe.Sizeof(rawMouse{})) {
+				rm := (*rawMouse)(unsafe.Pointer(&buf[unsafe.Sizeof(rawInputHeader{})]))
+				r.handleMouse(rm)
+			}
+		case rimTypeHID:
+			// RAWHID struct: dwSizeHid (uint32) + dwCount (uint32) + bRawData (variable).
+			// Total header size is sizeof(RAWINPUTHEADER) = 16/24 bytes depending on arch.
+			headerSize := unsafe.Sizeof(rawInputHeader{})
+			// RAWHID fields start after the header.
+			if uintptr(len(buf)) < headerSize+8 {
+				break
+			}
+			dwSizeHid := *(*uint32)(unsafe.Pointer(&buf[headerSize]))
+			dwCount := *(*uint32)(unsafe.Pointer(&buf[headerSize+4]))
+			if dwSizeHid == 0 || dwCount == 0 {
+				break
+			}
+			dataOffset := headerSize + 8
+			totalData := uintptr(dwSizeHid) * uintptr(dwCount)
+			if uintptr(len(buf)) < dataOffset+totalData {
+				break
+			}
+			rawHIDData := buf[dataOffset : dataOffset+totalData]
+			r.routeHIDInput(hdr.hDevice, rawHIDData, dwSizeHid)
+		}
+
+		ret, _, _ := procDefWindowProcW.Call(hwnd, msgID, wParam, lParam)
+		return ret
+
+	default:
+		ret, _, _ := procDefWindowProcW.Call(hwnd, msgID, wParam, lParam)
 		return ret
 	}
-	// Determine required buffer size
-	var size uint32
-	procGetRawInputData.Call(
-		lParam,
-		uintptr(ridInput),
-		0,
-		uintptr(unsafe.Pointer(&size)),
-		uintptr(unsafe.Sizeof(rawInputHeader{})),
+}
+
+// handleDeviceChange processes WM_INPUT_DEVICE_CHANGE messages.
+// wParam is GIDC_ARRIVAL (1) or GIDC_REMOVAL (2); lParam is the device handle.
+func (r *Reader) handleDeviceChange(wParam, lParam uintptr) {
+	hDevice := lParam
+	added := wParam == giahDeviceArrival
+
+	if !added {
+		// Remove from cache on departure.
+		delete(r.hidDeviceCache, hDevice)
+	}
+
+	// Look up usage page/usage for this device.
+	usage := r.resolveDeviceUsage(hDevice)
+	if usage.usagePage == 0 {
+		return // unknown device type
+	}
+
+	// Route to matching callbacks.
+	r.hidMu.RLock()
+	callbacks := r.hidCallbacks
+	r.hidMu.RUnlock()
+
+	for _, cb := range callbacks {
+		if cb.usagePage == usage.usagePage && cb.usage == usage.usage && cb.changeCb != nil {
+			cb.changeCb(added, hDevice)
+		}
+	}
+}
+
+// routeHIDInput routes a raw HID report to registered callbacks.
+// Called from wndProc on the message loop thread.
+func (r *Reader) routeHIDInput(hDevice uintptr, rawData []byte, reportSize uint32) {
+	usage := r.resolveDeviceUsage(hDevice)
+	if usage.usagePage == 0 {
+		return
+	}
+
+	r.hidMu.RLock()
+	callbacks := r.hidCallbacks
+	r.hidMu.RUnlock()
+
+	for _, cb := range callbacks {
+		if cb.usagePage == usage.usagePage && cb.usage == usage.usage && cb.inputCb != nil {
+			cb.inputCb(hDevice, rawData, reportSize)
+		}
+	}
+}
+
+// resolveDeviceUsage returns the HID usage page and usage for a device handle,
+// using a cache to avoid repeated GetRawInputDeviceInfoW calls.
+// Only called from the message loop goroutine (no locking needed for the cache).
+func (r *Reader) resolveDeviceUsage(hDevice uintptr) hidDeviceUsage {
+	if u, ok := r.hidDeviceCache[hDevice]; ok {
+		return u
+	}
+
+	// Query device info to determine usage page/usage.
+	// RID_DEVICE_INFO layout: dwSize(4) + dwType(4) + union(varying)
+	// For HID: dwType=2, then hid struct: dwVendorId(4)+dwProductId(4)+dwVersionNumber(4)+usUsagePage(2)+usUsage(2)
+	// Total minimum size: 32 bytes (covers all variants on both 32/64-bit).
+	var devInfo [32]byte
+	devInfoSize := uint32(len(devInfo))
+	ret, _, _ := procGetRawInputDeviceInfoW.Call(
+		hDevice,
+		ridiDeviceinfo,
+		uintptr(unsafe.Pointer(&devInfo[0])),
+		uintptr(unsafe.Pointer(&devInfoSize)),
 	)
-	if size == 0 || size > 1024 {
-		ret, _, _ := procDefWindowProcW.Call(hwnd, msg, wParam, lParam)
-		return ret
+	if ret == ^uintptr(0) { // -1 = error
+		u := hidDeviceUsage{}
+		r.hidDeviceCache[hDevice] = u
+		return u
 	}
 
-	// Allocate buffer and read data
-	buf := make([]byte, size)
-	written, _, _ := procGetRawInputData.Call(
-		lParam,
-		uintptr(ridInput),
-		uintptr(unsafe.Pointer(&buf[0])),
-		uintptr(unsafe.Pointer(&size)),
-		uintptr(unsafe.Sizeof(rawInputHeader{})),
-	)
-	if written == 0 || written == ^uintptr(0) {
-		ret, _, _ := procDefWindowProcW.Call(hwnd, msg, wParam, lParam)
-		return ret
+	// devInfo layout (RID_DEVICE_INFO):
+	//   offset 0: DWORD cbSize
+	//   offset 4: DWORD dwType  (0=mouse, 1=keyboard, 2=HID)
+	//   offset 8: union { RID_DEVICE_INFO_MOUSE | RID_DEVICE_INFO_KEYBOARD | RID_DEVICE_INFO_HID }
+	// RID_DEVICE_INFO_HID:
+	//   offset 8:  DWORD dwVendorId
+	//   offset 12: DWORD dwProductId
+	//   offset 16: DWORD dwVersionNumber
+	//   offset 20: USAGE usUsagePage
+	//   offset 22: USAGE usUsage
+	dwType := *(*uint32)(unsafe.Pointer(&devInfo[4]))
+	if dwType != 2 { // not a HID device
+		u := hidDeviceUsage{}
+		r.hidDeviceCache[hDevice] = u
+		return u
 	}
 
-	ri := (*rawInput)(unsafe.Pointer(&buf[0]))
-	switch ri.header.dwType {
-	case rimTypeKeyboard:
-		r.handleKeyboard(ri.rawInputKeyboard())
-	case rimTypeMouse:
-		r.handleMouse(ri.rawInputMouse())
-	}
-
-	ret, _, _ := procDefWindowProcW.Call(hwnd, msg, wParam, lParam)
-	return ret
+	usagePage := *(*uint16)(unsafe.Pointer(&devInfo[20]))
+	usage := *(*uint16)(unsafe.Pointer(&devInfo[22]))
+	u := hidDeviceUsage{usagePage: usagePage, usage: usage}
+	r.hidDeviceCache[hDevice] = u
+	return u
 }
 
 // handleKeyboard processes a RAWKEYBOARD event.

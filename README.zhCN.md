@@ -15,9 +15,8 @@
 
 ## 环境要求
 
-- **SDL3.dll**（≥ 3.2.0）— 放在可执行文件同目录或系统 PATH 中
-  - 从 https://github.com/libsdl-org/SDL/releases 下载
-- 键盘/鼠标捕获需要 Windows；仅手柄模式支持 Linux/macOS
+- **Windows** — 手柄输入使用 XInput（Windows 8+ 内置，`xinput1_4.dll`），无需额外 DLL
+- 键盘/鼠标捕获同样需要 Windows（Raw Input API）
 
 ## 快速开始
 
@@ -168,9 +167,8 @@ goroutine: HTTP Server                ← 静态文件 + /ws WebSocket 端点
 
 | 包 | 用途 |
 |----|------|
-| `github.com/jupiterrider/purego-sdl3` | 无 CGo 的 SDL3 Go 绑定 |
 | `github.com/lxzan/gws` | WebSocket 服务端 |
-| `github.com/ebitengine/purego` | FFI 基础（间接依赖） |
+| `github.com/klauspost/compress` | 间接依赖（通过 gws，permessage-deflate） |
 | `fyne.io/systray` | Windows 系统托盘 |
 
 ## 常见修改

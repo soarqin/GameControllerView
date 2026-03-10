@@ -15,9 +15,8 @@ Real-time gamepad, keyboard, and mouse input visualizer. Go backend reads input 
 
 ## Requirements
 
-- **SDL3.dll** (≥ 3.2.0) — place next to the executable or in system PATH
-  - Download from https://github.com/libsdl-org/SDL/releases
-- Windows required for keyboard/mouse capture; gamepad-only mode works on Linux/macOS
+- **Windows** — gamepad input uses XInput (built into Windows 8+, `xinput1_4.dll`); no external DLL required
+- Windows also required for keyboard/mouse capture (Raw Input API)
 
 ## Quick Start
 
@@ -166,9 +165,8 @@ goroutine: HTTP Server                ← Static files + /ws WebSocket endpoint
 
 | Package | Purpose |
 |---------|---------|
-| `github.com/jupiterrider/purego-sdl3` | CGo-free SDL3 Go bindings |
 | `github.com/lxzan/gws` | WebSocket server |
-| `github.com/ebitengine/purego` | FFI base (transitive) |
+| `github.com/klauspost/compress` | Transitive dependency (via gws, permessage-deflate) |
 | `fyne.io/systray` | Windows system tray |
 
 ## Common Modifications

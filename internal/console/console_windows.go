@@ -3,7 +3,7 @@
 // Package console provides cross-platform console detection and signal handling.
 // On Windows, it provides utilities to detect if the program is running from a terminal
 // or was double-clicked (GUI mode), and sets up reliable Ctrl+C handling that works
-// even with libraries like SDL3 that use runtime.LockOSThread().
+// even when goroutines are pinned to OS threads via runtime.LockOSThread().
 package console
 
 import (
@@ -250,7 +250,7 @@ var globalHandlerState *consoleHandlerState
 
 // SetupConsoleHandler sets up a Windows console control handler for Ctrl+C.
 // This is needed because Go's os.Interrupt signal handling may not work reliably
-// when certain libraries (e.g., SDL3) are running with runtime.LockOSThread().
+// when goroutines are pinned to OS threads via runtime.LockOSThread().
 //
 // Only applicable on Windows. On other platforms, it returns a no-op function.
 //
@@ -258,8 +258,8 @@ var globalHandlerState *consoleHandlerState
 //   - shutdownChan: Channel that will be closed when Ctrl+C or Ctrl+Break is pressed.
 //
 // Returns:
-//   - A function that can be called to re-register the handler after library initialization.
-//     This is necessary because some libraries (like SDL3) override console handlers during init.
+//   - A function that can be called to re-register the handler if a third-party library
+//     overrides it during its own initialisation.
 func SetupConsoleHandler(shutdownChan chan struct{}) func() {
 	// Allocate state on heap to ensure it's valid for the callback
 	globalHandlerState = &consoleHandlerState{
@@ -296,6 +296,6 @@ func SetupConsoleHandler(shutdownChan chan struct{}) func() {
 	// Initial registration
 	registerHandler()
 
-	// Return a function that can be called to re-register (e.g., after SDL init)
+	// Return a function that can be called to re-register if needed
 	return registerHandler
 }

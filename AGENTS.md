@@ -1,6 +1,6 @@
 # InputView
 
-Go backend reads gamepad input via SDL3 and keyboard/mouse input via Windows Raw Input API, pushes to frontend via WebSocket, and renders real-time gamepad/keyboard/mouse visualization on Canvas.
+Go backend reads gamepad input via Windows XInput API and keyboard/mouse input via Windows Raw Input API, pushes to frontend via WebSocket, and renders real-time gamepad/keyboard/mouse visualization on Canvas.
 
 ## Language Conventions
 - Documentation uses markdown format
@@ -26,7 +26,7 @@ go build -tags release -ldflags "-s -w -H=windowsgui" -o InputView.exe ./cmd/inp
 # Open browser at http://localhost:8080
 ```
 
-Requires **SDL3.dll** (>= 3.2.0) in the same directory as the executable or in system PATH. Download from https://github.com/libsdl-org/SDL/releases.
+No external DLL required. Gamepad input uses XInput (`xinput1_4.dll`), which is built into Windows 8+.
 
 ## URL Parameters
 
@@ -71,7 +71,10 @@ InputView/
     │   ├── state.go                    # GamepadState data model (includes PlayerIndex)
     │   ├── mapping.go                  # Device mapping types & GetMapping() function
     │   ├── mapping_table.go            # VID/PID device mapping table (550+ entries)
-    │   └── reader.go                   # SDL3 Joystick reader, supports multi-gamepad switching, SDL init callback
+    │   ├── reader.go                   # Reader struct: shared fields, Changes()/GetPlayerIndex()/SetActiveByPlayerIndex()
+    │   ├── reader_windows.go           # Windows implementation: XInput polling loop (~60Hz)
+    │   ├── reader_other.go             # Non-Windows stub (blocks until ctx cancel)
+    │   └── xinput_windows.go           # XInput API bindings (syscall): GetState, GetCapabilitiesEx (ordinal 108)
     ├── hub/
     │   ├── hub.go                      # WebSocket hub: client management, targeted broadcast, main loop
     │   ├── client.go                   # WebSocket client: connection, read/write pumps, message handling
@@ -111,10 +114,10 @@ The server mounts this directory at `/overlays/`. Presets are **not** embedded i
 
 ### Thread Model
 
-SDL3 must run on the OS main thread. In `main.go`, `reader.Run(ctx)` executes the SDL event loop in a separate goroutine (internally calls `runtime.LockOSThread`), while the main thread waits for signals.
+XInput is thread-safe and does not require `LockOSThread`. The gamepad reader runs as a plain goroutine.
 
 ```
-goroutine: Reader.Run(ctx)     ← SDL Init → Callback (re-register Windows handler) → PollEvent + Poll Joystick (~60Hz)
+goroutine: Reader.Run(ctx)     ← XInput polling loop (~60Hz, time.Sleep based)
                                    ↓
                             chan GamepadState
                                    ↓
@@ -134,13 +137,10 @@ goroutine: rawinput.Reader.Run(ctx)  ← Windows Raw Input API (HWND_MESSAGE win
 goroutine: Broadcaster.Run()         ← Also listens on kmChanges channel, broadcasts to km-subscribed clients
 ```
 
-**SDL Initialization Callback**: On Windows, a callback is invoked after SDL initialization to re-register the console control handler (SDL3 overrides it during init). Use `reader.SetOnSDLInitCallback(func())` to set platform-specific post-init behavior.
-
 ### Signal Handling
 
 - Captures `os.Interrupt` (Ctrl+C) and `syscall.SIGTERM`
-- **Windows**: Uses `SetConsoleCtrlHandler` API via `console.SetupConsoleHandler()` because SDL3 with `LockOSThread()` interferes with Go's standard signal handling
-  - Handler is re-registered after SDL initialization (SDL3 overrides console handlers during init)
+- **Windows**: Uses `SetConsoleCtrlHandler` API via `console.SetupConsoleHandler()` because `runtime.LockOSThread()` (used by the Raw Input message loop) can interfere with Go's standard signal handling
   - Supports both Ctrl+C and Ctrl+Break
   - Uses atomic operations to prevent panic from rapid key presses
 - **Unix/Linux**: Uses Go's standard `os.Interrupt` signal handling
@@ -153,8 +153,8 @@ goroutine: Broadcaster.Run()         ← Also listens on kmChanges channel, broa
 ### Multi-Gamepad Support
 
 Reader maintains a list of connected gamepads (sorted by connection order):
-- `joystickOrder`: Gamepad connection order (list of JoystickID)
-- `activeID`: JoystickID of the currently active gamepad
+- `joystickOrder`: Gamepad connection order (list of XInput user indices 0-3)
+- `activeIndex`: XInput user index of the currently active gamepad
 - `GetPlayerIndex()`: Get the 1-based number of the current active gamepad
 - `SetActiveByPlayerIndex(n)`: Switch to the specified numbered gamepad
 
@@ -181,10 +181,6 @@ Hub: Only send to clients with playerIndex == n
 - Arrow rotation for `mouse_movement` Point mode (type 9): sprite faces **up** by default, so angle formula is `Math.atan2(mx, -my)` (not the standard `atan2(y, x)`).
 - Mouse button codes use `uint16` (not `uint8`) throughout — Go's `encoding/json` serializes `[]uint8` as a base64 string rather than a JSON number array, silently breaking frontend parsing.
 - `KeyMouseState` carries `PendingKeysDown/Up` and `PendingButtonsDown/Up` slices (tagged `json:"-"`) to capture button events that occur and complete within a single 16ms tick. `ComputeKeyMouseDelta` uses these pending lists when non-nil, falling back to prev/curr state comparison otherwise.
-
-### Using Joystick Low-Level API (Not Gamepad)
-
-Intentionally uses SDL3 Joystick low-level API instead of Gamepad high-level API to avoid conflicts with other applications or games. Joystick API directly reads HID device data, requiring manual maintenance of axis/button index to semantic name mappings (see `mapping.go`).
 
 ### WebSocket Message Protocol
 
@@ -316,19 +312,17 @@ All drawing logic is in `internal/web/frontend/app.js` in `drawController()` and
 
 ### Modifying Poll Frequency
 
-`pollDelayNS` constant in `internal/gamepad/reader.go` (currently 16ms ≈ 60Hz).
+`pollDelay` constant in `internal/gamepad/reader_windows.go` (currently 16ms ≈ 60Hz).
 
 ### Modifying Deadzone
 
-`deadzone` constant in `internal/gamepad/reader.go` (currently 0.05), `analogThreshold` constant in `internal/gamepad/state.go` (currently 0.01, used for delta comparison).
+`deadzone` constant in `internal/gamepad/reader_windows.go` (currently 0.05), `analogThreshold` constant in `internal/gamepad/state.go` (currently 0.01, used for delta comparison).
 
 ## Dependencies
 
 | Package | Purpose |
 |---------|---------|
-| `github.com/jupiterrider/purego-sdl3` | CGo-free SDL3 Go bindings |
 | `github.com/lxzan/gws` | WebSocket server |
 | `github.com/klauspost/compress` | Transitive dependency (via gws, permessage-deflate) |
-| `github.com/ebitengine/purego` | Transitive dependency, FFI base for purego-sdl3 |
 | `fyne.io/systray` | Windows system tray integration |
 | `github.com/godbus/dbus/v5` | Transitive (via systray, Linux only) |

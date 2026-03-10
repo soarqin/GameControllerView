@@ -1,83 +1,72 @@
 package gamepad
 
 import (
-	"context"
-	"log"
-	"runtime"
 	"sync"
-
-	"github.com/jupiterrider/purego-sdl3/sdl"
 )
 
-const (
-	deadzone          = 0.05
-	pollDelayNS       = 16_000_000 // ~60Hz
-	hatUp       uint8 = 0x01
-	hatRight    uint8 = 0x02
-	hatDown     uint8 = 0x04
-	hatLeft     uint8 = 0x08
-)
-
-type joystickInfo struct {
-	joystick *sdl.Joystick
-	mapping  *DeviceMapping
-	name     string
-	id       sdl.JoystickID
-}
-
-// Reader reads gamepad input from SDL3 Joystick API and emits state changes.
+// Reader reads gamepad input and emits state changes on a channel.
+// On Windows, it uses the XInput API (xinput1_4.dll / xinput1_3.dll).
+// On other platforms, it is a no-op stub pending future implementation.
 type Reader struct {
 	state         GamepadState
 	prevState     GamepadState
-	joysticks     map[sdl.JoystickID]*joystickInfo
-	activeID      sdl.JoystickID // the first connected joystick
+	joysticks     map[uint32]*joystickInfo // key: XInput user index (0-3)
+	activeIndex   uint32                   // XInput user index of the active controller
 	hasActive     bool
-	joystickOrder []sdl.JoystickID // maintain connection order
+	joystickOrder []uint32 // connection order (XInput user indices)
 	changes       chan GamepadState
 	mu            sync.RWMutex
-	onSDLInit     func() // Optional callback called after SDL initialization
 }
 
+// joystickInfo holds per-slot metadata for a connected XInput controller.
+type joystickInfo struct {
+	mapping *DeviceMapping
+	name    string
+	vidPID  string // "VID_XXXX&PID_XXXX" for logging; empty if unavailable
+	index   uint32 // XInput user index (0-3)
+}
+
+// NewReader creates a new Reader.
 func NewReader() *Reader {
 	return &Reader{
-		joysticks: make(map[sdl.JoystickID]*joystickInfo),
+		joysticks: make(map[uint32]*joystickInfo),
 		changes:   make(chan GamepadState, 64),
 	}
 }
 
-// Changes returns the channel on which state changes are sent.
+// Changes returns the channel on which state changes are emitted.
 func (r *Reader) Changes() <-chan GamepadState {
 	return r.changes
 }
 
-// GetPlayerIndex returns the 1-based player index of the currently active joystick.
+// GetPlayerIndex returns the 1-based player index of the currently active controller.
 func (r *Reader) GetPlayerIndex() int {
 	r.mu.RLock()
 	defer r.mu.RUnlock()
-	for i, id := range r.joystickOrder {
-		if id == r.activeID {
+	for i, idx := range r.joystickOrder {
+		if idx == r.activeIndex {
 			return i + 1
 		}
 	}
 	return 0
 }
 
-// SetActiveByPlayerIndex sets the active joystick by 1-based player index.
-// Returns true if successful, false if index is out of range.
+// SetActiveByPlayerIndex sets the active controller by 1-based player index.
+// Returns true if successful, false if the index is out of range.
 func (r *Reader) SetActiveByPlayerIndex(playerIndex int) bool {
 	r.mu.Lock()
 	if playerIndex < 1 || playerIndex > len(r.joystickOrder) {
 		r.mu.Unlock()
 		return false
 	}
-	newID := r.joystickOrder[playerIndex-1]
-	info := r.joysticks[newID]
+	newIndex := r.joystickOrder[playerIndex-1]
+	info := r.joysticks[newIndex]
 	if info == nil {
 		r.mu.Unlock()
 		return false
 	}
 
-	r.activeID = newID
+	r.activeIndex = newIndex
 	r.hasActive = true
 	r.state.Connected = true
 	r.state.Name = info.name
@@ -85,319 +74,11 @@ func (r *Reader) SetActiveByPlayerIndex(playerIndex int) bool {
 	r.state.PlayerIndex = playerIndex
 	r.mu.Unlock()
 
-	log.Printf("Active joystick switched to player %d: %s (ID=%d)", playerIndex, info.name, newID)
 	r.emitState()
 	return true
 }
 
-// SetOnSDLInitCallback sets a callback function that will be called after SDL initialization.
-// This is useful for platform-specific setup that needs to happen after SDL is initialized.
-func (r *Reader) SetOnSDLInitCallback(callback func()) {
-	r.mu.Lock()
-	defer r.mu.Unlock()
-	r.onSDLInit = callback
-}
-
-// Run initializes SDL and runs the main event+polling loop on the current thread.
-// Must be called from the main goroutine with runtime.LockOSThread().
-func (r *Reader) Run(ctx context.Context) {
-	runtime.LockOSThread()
-	defer runtime.UnlockOSThread()
-
-	if !sdl.Init(sdl.InitJoystick) {
-		log.Fatalf("SDL Init failed: %s", sdl.GetError())
-	}
-	defer sdl.Quit()
-
-	log.Println("SDL3 Joystick subsystem initialized")
-
-	// Call SDL init callback if set (e.g., to re-register Windows console handler)
-	r.mu.Lock()
-	callback := r.onSDLInit
-	r.mu.Unlock()
-	if callback != nil {
-		callback()
-	}
-
-	// Check for already-connected joysticks
-	ids := sdl.GetJoysticks()
-	for _, id := range ids {
-		r.openJoystick(id)
-	}
-
-	for {
-		select {
-		case <-ctx.Done():
-			r.closeAll()
-			return
-		default:
-		}
-
-		r.processEvents()
-		r.pollState()
-		sdl.DelayNS(pollDelayNS)
-	}
-}
-
-func (r *Reader) processEvents() {
-	var event sdl.Event
-	for sdl.PollEvent(&event) {
-		switch event.Type() {
-		case sdl.EventJoystickAdded:
-			devEvent := event.JDevice()
-			r.openJoystick(devEvent.Which)
-
-		case sdl.EventJoystickRemoved:
-			devEvent := event.JDevice()
-			r.removeJoystick(devEvent.Which)
-
-		case sdl.EventJoystickButtonDown:
-			// Button press handled in poll loop
-
-		case sdl.EventJoystickButtonUp:
-			// Button release handled in poll loop
-
-		case sdl.EventJoystickAxisMotion:
-			// Axis motion handled in poll loop
-
-		case sdl.EventJoystickHatMotion:
-			// Hat motion handled in poll loop
-		}
-	}
-}
-
-func (r *Reader) openJoystick(instanceID sdl.JoystickID) {
-	if _, exists := r.joysticks[instanceID]; exists {
-		return
-	}
-
-	js := sdl.OpenJoystick(instanceID)
-	if js == nil {
-		log.Printf("Failed to open joystick %d: %s", instanceID, sdl.GetError())
-		return
-	}
-
-	jsID := sdl.GetJoystickID(js)
-	vendorID := sdl.GetJoystickVendor(js)
-	productID := sdl.GetJoystickProduct(js)
-	name := sdl.GetJoystickName(js)
-	mapping := GetMapping(vendorID, productID)
-
-	info := &joystickInfo{
-		joystick: js,
-		mapping:  mapping,
-		name:     name,
-		id:       jsID,
-	}
-
-	r.mu.Lock()
-	r.joysticks[jsID] = info
-	r.joystickOrder = append(r.joystickOrder, jsID)
-	r.mu.Unlock()
-
-	numAxes := sdl.GetNumJoystickAxes(js)
-	numButtons := sdl.GetNumJoystickButtons(js)
-	numHats := sdl.GetNumJoystickHats(js)
-
-	playerIndex := len(r.joystickOrder)
-	log.Printf("Joystick connected: Player %d - %s (VID=%04X PID=%04X) mapping=%s axes=%d buttons=%d hats=%d",
-		playerIndex, name, vendorID, productID, mapping.Name, numAxes, numButtons, numHats)
-
-	// Use the first connected joystick as active
-	if !r.hasActive {
-		r.activeID = jsID
-		r.hasActive = true
-		log.Printf("Active joystick set to player %d: %s (ID=%d)", playerIndex, name, jsID)
-
-		r.mu.Lock()
-		r.state.Connected = true
-		r.state.Name = name
-		r.state.ControllerType = mapping.Name
-		r.state.PlayerIndex = playerIndex
-		r.mu.Unlock()
-
-		r.emitState()
-	}
-}
-
-func (r *Reader) removeJoystick(instanceID sdl.JoystickID) {
-	info, exists := r.joysticks[instanceID]
-	if !exists {
-		return
-	}
-
-	log.Printf("Joystick disconnected: Player %d - %s", r.getPlayerIndexForID(instanceID), info.name)
-	sdl.CloseJoystick(info.joystick)
-
-	r.mu.Lock()
-	delete(r.joysticks, instanceID)
-	// Remove from joystickOrder
-	newOrder := make([]sdl.JoystickID, 0, len(r.joystickOrder))
-	for _, id := range r.joystickOrder {
-		if id != instanceID {
-			newOrder = append(newOrder, id)
-		}
-	}
-	r.joystickOrder = newOrder
-	r.mu.Unlock()
-
-	if r.hasActive && r.activeID == instanceID {
-		r.hasActive = false
-		if len(r.joysticks) == 0 {
-			r.mu.Lock()
-			r.state = GamepadState{}
-			r.mu.Unlock()
-			r.emitState()
-		} else {
-			// Promote the next available joystick (by order)
-			for _, id := range r.joystickOrder {
-				if js, ok := r.joysticks[id]; ok && sdl.JoystickConnected(js.joystick) {
-					r.activeID = id
-					r.hasActive = true
-					playerIndex := r.getPlayerIndexForID(id)
-					log.Printf("Active joystick switched to player %d: %s (ID=%d)", playerIndex, js.name, id)
-
-					r.mu.Lock()
-					r.state.Connected = true
-					r.state.Name = js.name
-					r.state.ControllerType = js.mapping.Name
-					r.state.PlayerIndex = playerIndex
-					r.mu.Unlock()
-
-					r.emitState()
-					break
-				}
-			}
-		}
-	}
-}
-
-// Helper to get player index for a joystick ID (1-based)
-func (r *Reader) getPlayerIndexForID(id sdl.JoystickID) int {
-	for i, jid := range r.joystickOrder {
-		if jid == id {
-			return i + 1
-		}
-	}
-	return 0
-}
-
-func (r *Reader) closeAll() {
-	for id, info := range r.joysticks {
-		sdl.CloseJoystick(info.joystick)
-		delete(r.joysticks, id)
-	}
-}
-
-func (r *Reader) pollState() {
-	if !r.hasActive {
-		return
-	}
-
-	info, exists := r.joysticks[r.activeID]
-	if !exists || !sdl.JoystickConnected(info.joystick) {
-		return
-	}
-
-	js := info.joystick
-	mapping := info.mapping
-	state := GamepadState{
-		Connected:      true,
-		ControllerType: mapping.Name,
-		Name:           info.name,
-		PlayerIndex:    r.GetPlayerIndex(),
-	}
-
-	// Read axes
-	for _, am := range mapping.Axes {
-		raw := sdl.GetJoystickAxis(js, am.Index)
-		if am.IsTrigger {
-			val := normalizeTrigger(raw, am.RawMin, am.RawMax)
-			val = applyDeadzone(val, deadzone)
-			switch am.Target {
-			case "lt":
-				state.Triggers.LT.Value = val
-			case "rt":
-				state.Triggers.RT.Value = val
-			}
-		} else {
-			val := normalizeAxis(raw)
-			if am.Invert {
-				val = -val
-			}
-			val = applyDeadzone(val, deadzone)
-			switch am.Target {
-			case "left_x":
-				state.Sticks.Left.Position.X = val
-			case "left_y":
-				state.Sticks.Left.Position.Y = val
-			case "right_x":
-				state.Sticks.Right.Position.X = val
-			case "right_y":
-				state.Sticks.Right.Position.Y = val
-			}
-		}
-	}
-
-	// Read buttons
-	numButtons := sdl.GetNumJoystickButtons(js)
-	for _, bm := range mapping.Buttons {
-		if bm.Index >= numButtons {
-			continue
-		}
-		pressed := sdl.GetJoystickButton(js, bm.Index)
-		switch bm.Target {
-		case "a":
-			state.Buttons.A = pressed
-		case "b":
-			state.Buttons.B = pressed
-		case "x":
-			state.Buttons.X = pressed
-		case "y":
-			state.Buttons.Y = pressed
-		case "lb":
-			state.Buttons.LB = pressed
-		case "rb":
-			state.Buttons.RB = pressed
-		case "back":
-			state.Buttons.Back = pressed
-		case "start":
-			state.Buttons.Start = pressed
-		case "guide":
-			state.Buttons.Guide = pressed
-		case "touchpad":
-			state.Buttons.Touchpad = pressed
-		case "capture":
-			state.Buttons.Capture = pressed
-		case "ls":
-			state.Sticks.Left.Pressed = pressed
-		case "rs":
-			state.Sticks.Right.Pressed = pressed
-		}
-	}
-
-	// Read hat (D-pad)
-	if mapping.HasHat && sdl.GetNumJoystickHats(js) > 0 {
-		hat := sdl.GetJoystickHat(js, 0)
-		state.Dpad.Up = hat&hatUp != 0
-		state.Dpad.Right = hat&hatRight != 0
-		state.Dpad.Down = hat&hatDown != 0
-		state.Dpad.Left = hat&hatLeft != 0
-	}
-
-	// Compare with previous state and emit if changed
-	r.mu.Lock()
-	delta := ComputeDelta(r.prevState, state)
-	if !delta.IsEmpty() {
-		r.state = state
-		r.prevState = state
-		r.mu.Unlock()
-		r.emitState()
-	} else {
-		r.mu.Unlock()
-	}
-}
-
+// emitState sends the current state snapshot to the changes channel (non-blocking).
 func (r *Reader) emitState() {
 	r.mu.RLock()
 	s := r.state
@@ -406,6 +87,6 @@ func (r *Reader) emitState() {
 	select {
 	case r.changes <- s:
 	default:
-		// Drop if channel is full to avoid blocking the SDL thread
+		// Drop if channel is full to avoid blocking the polling goroutine.
 	}
 }

@@ -52,9 +52,7 @@ All Go module dependencies used by InputView carry licenses compatible with the 
 
 | Package | License |
 |---------|---------|
-| `github.com/jupiterrider/purego-sdl3` | MIT |
 | `github.com/lxzan/gws` | MIT |
 | `github.com/klauspost/compress` | BSD-3-Clause |
-| `github.com/ebitengine/purego` | Apache-2.0 |
 | `fyne.io/systray` | MIT |
 | `github.com/godbus/dbus/v5` | BSD-2-Clause |

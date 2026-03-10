@@ -26,9 +26,7 @@ func main() {
 	reader := gamepad.NewReader()
 
 	// Set up shutdown handling (console Ctrl+C or system tray, depending on build mode).
-	// onSDLInit must be called after SDL initializes (SDL may override console handlers).
-	extraShutdownCh, onSDLInit := setupShutdown(reader)
-	reader.SetOnSDLInitCallback(onSDLInit)
+	extraShutdownCh := setupShutdown()
 
 	// Handle OS signals (Ctrl+C on Unix, SIGTERM everywhere)
 	sigCh := make(chan os.Signal, 1)
@@ -65,7 +63,7 @@ func main() {
 
 	log.Println("InputView started: http://localhost:8080")
 
-	// Run gamepad reader (SDL must run with LockOSThread internally)
+	// Run gamepad reader (XInput polling loop, ~60 Hz)
 	readerDone := make(chan struct{})
 	go func() {
 		reader.Run(ctx)

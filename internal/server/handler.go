@@ -4,37 +4,73 @@ import (
 	"log"
 	"net/http"
 
-	"github.com/gorilla/websocket"
+	"github.com/lxzan/gws"
 	"github.com/soar/inputview/internal/gamepad"
 	"github.com/soar/inputview/internal/hub"
 )
 
-var upgrader = websocket.Upgrader{
-	ReadBufferSize:  1024,
-	WriteBufferSize: 1024,
-	CheckOrigin: func(r *http.Request) bool {
-		return true // Allow all origins for local use
-	},
+const sessionKeyClient = "client"
+
+// wsHandler implements the gws.Event interface to handle WebSocket lifecycle events.
+type wsHandler struct {
+	gws.BuiltinEventHandler
+	hub         *hub.Hub
+	broadcaster *hub.Broadcaster
+	reader      *gamepad.Reader
+}
+
+// OnOpen is called when a new WebSocket connection is established.
+// It creates a Client, registers it with the Hub, and sends the initial gamepad state.
+func (h *wsHandler) OnOpen(socket *gws.Conn) {
+	client := hub.NewClient(h.hub, socket)
+	socket.Session().Store(sessionKeyClient, client)
+	h.hub.Register(client)
+	h.broadcaster.SendInitialState(client)
+}
+
+// OnClose is called when a WebSocket connection is closed (gracefully or due to error).
+// It unregisters the client from the Hub.
+func (h *wsHandler) OnClose(socket *gws.Conn, err error) {
+	v, ok := socket.Session().Load(sessionKeyClient)
+	if !ok {
+		return
+	}
+	client := v.(*hub.Client)
+	h.hub.Unregister(client)
+}
+
+// OnMessage is called when a text or binary message is received from the client.
+func (h *wsHandler) OnMessage(socket *gws.Conn, message *gws.Message) {
+	defer message.Close()
+	v, ok := socket.Session().Load(sessionKeyClient)
+	if !ok {
+		return
+	}
+	client := v.(*hub.Client)
+	client.HandleMessage(h.reader, h.broadcaster, message.Bytes())
 }
 
 func handleWebSocket(h *hub.Hub, b *hub.Broadcaster, reader *gamepad.Reader) http.HandlerFunc {
+	handler := &wsHandler{
+		hub:         h,
+		broadcaster: b,
+		reader:      reader,
+	}
+	upgrader := gws.NewUpgrader(handler, &gws.ServerOption{
+		// Allow all origins for local use
+		Authorize: func(r *http.Request, session gws.SessionStorage) bool {
+			return true
+		},
+	})
+
 	return func(w http.ResponseWriter, r *http.Request) {
-		conn, err := upgrader.Upgrade(w, r, nil)
+		socket, err := upgrader.Upgrade(w, r)
 		if err != nil {
 			log.Printf("WebSocket upgrade failed: %v", err)
 			return
 		}
-
-		client := hub.NewClient(h, conn)
-		h.Register(client)
-
-		// Send current state to the new client
-		b.SendInitialState(client)
-
-		// Start write pump
-		go client.WritePump()
-		// Start read pump with reader for handling client messages.
-		// Pass broadcaster as KMStateProvider so subscribe_km gets the initial state.
-		go client.ReadPumpWithHandler(reader, b)
+		// ReadLoop drives the event loop (OnOpen, OnMessage, OnClose).
+		// Run in a goroutine so the HTTP handler returns immediately.
+		go socket.ReadLoop()
 	}
 }

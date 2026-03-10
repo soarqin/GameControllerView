@@ -327,7 +327,8 @@ All drawing logic is in `internal/web/frontend/app.js` in `drawController()` and
 | Package | Purpose |
 |---------|---------|
 | `github.com/jupiterrider/purego-sdl3` | CGo-free SDL3 Go bindings |
-| `github.com/gorilla/websocket` | WebSocket server |
+| `github.com/lxzan/gws` | WebSocket server |
+| `github.com/klauspost/compress` | Transitive dependency (via gws, permessage-deflate) |
 | `github.com/ebitengine/purego` | Transitive dependency, FFI base for purego-sdl3 |
 | `fyne.io/systray` | Windows system tray integration |
 | `github.com/godbus/dbus/v5` | Transitive (via systray, Linux only) |

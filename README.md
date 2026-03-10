@@ -167,7 +167,7 @@ goroutine: HTTP Server                ← Static files + /ws WebSocket endpoint
 | Package | Purpose |
 |---------|---------|
 | `github.com/jupiterrider/purego-sdl3` | CGo-free SDL3 Go bindings |
-| `github.com/gorilla/websocket` | WebSocket server |
+| `github.com/lxzan/gws` | WebSocket server |
 | `github.com/ebitengine/purego` | FFI base (transitive) |
 | `fyne.io/systray` | Windows system tray |
 

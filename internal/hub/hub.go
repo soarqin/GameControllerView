@@ -38,14 +38,7 @@ func (h *Hub) BroadcastToPlayer(msg []byte, playerIndex int) {
 
 	for client := range h.clients {
 		if client.playerIndex == playerIndex {
-			select {
-			case client.send <- msg:
-			default:
-				// Client send buffer full, disconnect
-				go func(c *Client) {
-					h.unregister <- c
-				}(client)
-			}
+			client.Send(msg)
 		}
 	}
 }
@@ -57,14 +50,7 @@ func (h *Hub) BroadcastKeyMouse(msg []byte) {
 
 	for client := range h.clients {
 		if client.wantsKeyMouse.Load() == 1 {
-			select {
-			case client.send <- msg:
-			default:
-				// Client send buffer full, disconnect
-				go func(c *Client) {
-					h.unregister <- c
-				}(client)
-			}
+			client.Send(msg)
 		}
 	}
 }
@@ -83,7 +69,6 @@ func (h *Hub) Run() {
 			h.mu.Lock()
 			if _, ok := h.clients[client]; ok {
 				delete(h.clients, client)
-				close(client.send)
 			}
 			h.mu.Unlock()
 			log.Printf("Client disconnected (total: %d)", len(h.clients))

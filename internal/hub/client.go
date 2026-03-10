@@ -5,7 +5,7 @@ import (
 	"log"
 	"sync/atomic"
 
-	"github.com/gorilla/websocket"
+	"github.com/lxzan/gws"
 )
 
 // PlayerSwitcher defines the interface for switching active player index.
@@ -21,18 +21,16 @@ type KMStateProvider interface {
 // Client represents a connected WebSocket client.
 type Client struct {
 	hub           *Hub
-	conn          *websocket.Conn
-	send          chan []byte
+	conn          *gws.Conn
 	playerIndex   int          // 1-based player index this client is listening to
 	wantsKeyMouse atomic.Int32 // 1 when client has subscribed to keyboard/mouse events; 0 otherwise
 }
 
 // NewClient creates a new Client attached to the hub.
-func NewClient(hub *Hub, conn *websocket.Conn) *Client {
+func NewClient(hub *Hub, conn *gws.Conn) *Client {
 	return &Client{
 		hub:         hub,
 		conn:        conn,
-		send:        make(chan []byte, 256),
 		playerIndex: 1, // Default to player 1
 	}
 }
@@ -42,63 +40,37 @@ func (c *Client) SetPlayerIndex(index int) {
 	c.playerIndex = index
 }
 
-// WritePump sends messages from the send channel to the WebSocket connection.
-func (c *Client) WritePump() {
-	defer func() {
-		c.conn.Close()
-	}()
-
-	for msg := range c.send {
-		err := c.conn.WriteMessage(websocket.TextMessage, msg)
-		if err != nil {
-			break
-		}
-	}
+// Send queues a text message for asynchronous delivery to the client.
+// It is goroutine-safe and non-blocking; gws manages the internal write queue.
+func (c *Client) Send(data []byte) {
+	c.conn.WriteAsync(gws.OpcodeText, data, nil)
 }
 
-// ReadPumpWithHandler reads messages from the WebSocket and handles client commands.
-// kmProvider may be nil; if provided it is used to send the initial keyboard/mouse state
-// when the client sends a "subscribe_km" message.
-func (c *Client) ReadPumpWithHandler(reader PlayerSwitcher, kmProvider KMStateProvider) {
-	defer func() {
-		c.hub.Unregister(c)
-		c.conn.Close()
-	}()
+// HandleMessage parses and dispatches a client command message.
+// Called from the gws OnMessage event handler.
+func (c *Client) HandleMessage(reader PlayerSwitcher, kmProvider KMStateProvider, message []byte) {
+	var clientMsg ClientMessage
+	if err := json.Unmarshal(message, &clientMsg); err != nil {
+		log.Printf("Error parsing client message: %v", err)
+		return
+	}
 
-	for {
-		_, message, err := c.conn.ReadMessage()
-		if err != nil {
-			break
+	switch clientMsg.Type {
+	case "select_player":
+		if reader.SetActiveByPlayerIndex(clientMsg.PlayerIndex) {
+			c.SetPlayerIndex(clientMsg.PlayerIndex)
+			msg := NewPlayerSelectedMessage(clientMsg.PlayerIndex)
+			data, _ := json.Marshal(msg)
+			c.Send(data)
+			log.Printf("Client switched to player %d", clientMsg.PlayerIndex)
+		} else {
+			log.Printf("Failed to switch to player %d: invalid index", clientMsg.PlayerIndex)
 		}
-
-		// Parse client message
-		var clientMsg ClientMessage
-		if err := json.Unmarshal(message, &clientMsg); err != nil {
-			log.Printf("Error parsing client message: %v", err)
-			continue
-		}
-
-		switch clientMsg.Type {
-		case "select_player":
-			// Handle player selection
-			if reader.SetActiveByPlayerIndex(clientMsg.PlayerIndex) {
-				c.SetPlayerIndex(clientMsg.PlayerIndex)
-				// Send confirmation
-				msg := NewPlayerSelectedMessage(clientMsg.PlayerIndex)
-				data, _ := json.Marshal(msg)
-				c.send <- data
-				log.Printf("Client switched to player %d", clientMsg.PlayerIndex)
-			} else {
-				log.Printf("Failed to switch to player %d: invalid index", clientMsg.PlayerIndex)
-			}
-		case "subscribe_km":
-			// Client requests keyboard/mouse event stream
-			c.wantsKeyMouse.Store(1)
-			log.Printf("Client subscribed to keyboard/mouse events")
-			// Send current full state immediately so client can render existing key states
-			if kmProvider != nil {
-				kmProvider.SendInitialKMState(c)
-			}
+	case "subscribe_km":
+		c.wantsKeyMouse.Store(1)
+		log.Printf("Client subscribed to keyboard/mouse events")
+		if kmProvider != nil {
+			kmProvider.SendInitialKMState(c)
 		}
 	}
 }

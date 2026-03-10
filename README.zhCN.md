@@ -169,7 +169,7 @@ goroutine: HTTP Server                ← 静态文件 + /ws WebSocket 端点
 | 包 | 用途 |
 |----|------|
 | `github.com/jupiterrider/purego-sdl3` | 无 CGo 的 SDL3 Go 绑定 |
-| `github.com/gorilla/websocket` | WebSocket 服务端 |
+| `github.com/lxzan/gws` | WebSocket 服务端 |
 | `github.com/ebitengine/purego` | FFI 基础（间接依赖） |
 | `fyne.io/systray` | Windows 系统托盘 |
 

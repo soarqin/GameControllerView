@@ -108,10 +108,7 @@ func (b *Broadcaster) SendInitialState(c *Client) {
 		log.Printf("Error marshaling initial state: %v", err)
 		return
 	}
-	select {
-	case c.send <- data:
-	default:
-	}
+	c.Send(data)
 }
 
 // SendInitialKMState sends the current full keyboard/mouse state to a newly subscribed client.
@@ -123,10 +120,7 @@ func (b *Broadcaster) SendInitialKMState(c *Client) {
 		log.Printf("Error marshaling initial km state: %v", err)
 		return
 	}
-	select {
-	case c.send <- data:
-	default:
-	}
+	c.Send(data)
 }
 
 func (b *Broadcaster) sendFull(state gamepad.GamepadState) {

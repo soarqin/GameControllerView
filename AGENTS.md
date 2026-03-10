@@ -218,16 +218,18 @@ Non-XInput HID gamepads (PS4/PS5/Switch Pro/generic) are captured via the **same
 **XInput filtering**: XInput creates a virtual HID device for each Xbox controller. These are identified by `IG_` in the device name (from `GetRawInputDeviceInfoW(RIDI_DEVICENAME)`). `isXInputDevice()` in `hidinput_windows.go` checks for this prefix — matching devices are skipped in the HID path to prevent double-reporting.
 
 **Report parsing**: On each WM_INPUT for a HID gamepad, `parseHIDReport()` is called:
-1. `HidP_GetUsageValue` — reads each analog axis value using the `valueCaps` list
+1. `HidP_GetUsageValue` — reads each analog axis value using the `valueCaps` list. Each `valueCaps` entry is iterated over its full `[UsageMin, UsageMax]` range (when `IsRange=1`) to handle controllers that pack multiple axes into a single caps entry.
 2. Hat switch (usage 0x39) → mapped to `DpadState` using `hatDirTable` (0=N, 1=NE, … 7=NW, ≥8=center)
 3. `HidP_GetUsages` — returns the list of currently pressed button usages (1-based)
 4. Button usages → `GamepadState` fields via `resolveButtonTarget()` + `applyButton()`
 
 **Preparsed data**: Fetched once per device via `GetRawInputDeviceInfoW(RIDI_PREPARSEDDATA)` and cached in `hidDeviceInfo`. Required for all `HidP_*` calls. Allocation must be at least 8-byte aligned (Go's `make([]byte)` satisfies this on all supported architectures).
 
+**Struct layout critical**: `hidpValueCaps` and `hidpButtonCaps` in `hidinput_windows.go` must exactly match the Windows SDK `HIDP_VALUE_CAPS` / `HIDP_BUTTON_CAPS` binary layout. The correct field order for `HIDP_VALUE_CAPS` after `IsAbsolute` is: `HasNull(1) Reserved(1) BitSize(2) ReportCount(2) Reserved2[5](10) UnitsExp(4) Units(4) LogicalMin(4) LogicalMax(4) PhysicalMin(4) PhysicalMax(4) [union 16 bytes]` — total 72 bytes. Any deviation causes all `UsageMin`/`UsageMax`/`LogicalMin`/`LogicalMax` fields to read as zero, silently breaking all axis and hat-switch parsing.
+
 **Axis normalization**: HID axis values are unsigned integers with `LogicalMin`/`LogicalMax` from value caps. `normalizeHIDAxis()` maps `[LogicalMin, LogicalMax]` to `[-1, 1]` for sticks or `[0, 1]` for triggers. Handles edge case where `LogicalMax < LogicalMin` due to sign-extension of a smaller type (detected via `BitSize`).
 
-**HID Y-axis direction**: HID Y axes are positive-downward. No inversion is applied in the HID path. XInput Y axes are positive-upward, but the frontend canvas renderer already inverts Y (`knobY = s.y - position.y * maxTravel`), so no backend inversion is applied in the XInput path either. Both paths pass `position.y` as-is; the frontend handles the canvas coordinate flip.
+**HID Y-axis direction**: HID Y axes are positive-downward. The HID path negates the Y value before storing it in `GamepadState` so that it matches the XInput convention (positive-upward). The frontend canvas renderer then inverts Y again (`knobY = s.y - position.y * maxTravel`), which correctly maps positive-up to upward knob movement. XInput Y axes are already positive-upward, so no inversion is applied in the XInput path.
 
 **Device-specific mappings**: `DeviceMapping` now has two optional HID fields:
 - `HIDAxes map[uint16]string` — maps HID usage codes to semantic axis targets. If nil, `defaultHIDAxes` is used (covers most standard gamepads).

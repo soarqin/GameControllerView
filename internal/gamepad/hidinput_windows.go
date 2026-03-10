@@ -90,26 +90,58 @@ type hidpCaps struct {
 	NumberFeatureDataIndices  uint16
 }
 
-// hidpValueCaps mirrors HIDP_VALUE_CAPS from hidpi.h.
-// The IsRange / IsStringRange / IsDesignatorRange / IsAbsolute fields are bools
-// stored as BOOLEAN (1 byte). The union that follows depends on IsRange.
-// We always use the Range variant (IsRange=true) for axis caps.
+// hidpValueCaps mirrors HIDP_VALUE_CAPS from hidpi.h exactly.
+//
+// SDK field order (hidpi.h):
+//
+//	USAGE   UsagePage;          // offset  0 (2)
+//	UCHAR   ReportID;           // offset  2 (1)
+//	BOOLEAN IsAlias;            // offset  3 (1)
+//	USHORT  BitField;           // offset  4 (2)
+//	USHORT  LinkCollection;     // offset  6 (2)
+//	USAGE   LinkUsage;          // offset  8 (2)
+//	USAGE   LinkUsagePage;      // offset 10 (2)
+//	BOOLEAN IsRange;            // offset 12 (1)
+//	BOOLEAN IsStringRange;      // offset 13 (1)
+//	BOOLEAN IsDesignatorRange;  // offset 14 (1)
+//	BOOLEAN IsAbsolute;         // offset 15 (1)
+//	BOOLEAN HasNull;            // offset 16 (1)
+//	UCHAR   Reserved;           // offset 17 (1)
+//	USHORT  BitSize;            // offset 18 (2)
+//	USHORT  ReportCount;        // offset 20 (2)
+//	USHORT  Reserved2[5];       // offset 22 (10) → end 32
+//	ULONG   UnitsExp;           // offset 32 (4)
+//	ULONG   Units;              // offset 36 (4)
+//	LONG    LogicalMin;         // offset 40 (4)
+//	LONG    LogicalMax;         // offset 44 (4)
+//	LONG    PhysicalMin;        // offset 48 (4)
+//	LONG    PhysicalMax;        // offset 52 (4)
+//	union { Range / NotRange }  // offset 56 (16)
+//	Total size: 72 bytes
 type hidpValueCaps struct {
-	UsagePage           uint16
-	ReportID            uint8
-	IsAlias             uint8 // BOOLEAN
-	BitField            uint16
-	LinkCollection      uint16
-	LinkUsage           uint16
-	LinkUsagePage       uint16
-	IsRange             uint8  // BOOLEAN
-	IsStringRange       uint8  // BOOLEAN
-	IsDesignatorRange   uint8  // BOOLEAN
-	IsAbsolute          uint8  // BOOLEAN
-	SupportedActivities uint16 // padding / reserved in older SDK
-	Reserved            [5]uint16
-	// Union: Range (IsRange=1) or NotRange (IsRange=0).
-	// We always read as Range.
+	UsagePage         uint16
+	ReportID          uint8
+	IsAlias           uint8 // BOOLEAN
+	BitField          uint16
+	LinkCollection    uint16
+	LinkUsage         uint16
+	LinkUsagePage     uint16
+	IsRange           uint8 // BOOLEAN
+	IsStringRange     uint8 // BOOLEAN
+	IsDesignatorRange uint8 // BOOLEAN
+	IsAbsolute        uint8 // BOOLEAN
+	HasNull           uint8 // BOOLEAN
+	Reserved          uint8
+	BitSize           uint16
+	ReportCount       uint16
+	Reserved2         [5]uint16
+	UnitsExp          uint32
+	Units             uint32
+	LogicalMin        int32
+	LogicalMax        int32
+	PhysicalMin       int32
+	PhysicalMax       int32
+	// Union (Range variant — we always read as Range):
 	UsageMin      uint16
 	UsageMax      uint16
 	StringMin     uint16
@@ -118,41 +150,52 @@ type hidpValueCaps struct {
 	DesignatorMax uint16
 	DataIndexMin  uint16
 	DataIndexMax  uint16
-	// Value fields
-	LogicalMin  int32
-	LogicalMax  int32
-	PhysicalMin int32
-	PhysicalMax int32
-	// Bit precision
-	UnitsExp    uint32
-	Units       uint32
-	BitSize     uint16
-	ReportCount uint16
 }
 
-// hidpButtonCaps mirrors HIDP_BUTTON_CAPS from hidpi.h (Range variant).
+// hidpButtonCaps mirrors HIDP_BUTTON_CAPS from hidpi.h exactly.
+//
+// SDK field order (hidpi.h):
+//
+//	USAGE   UsagePage;          // offset  0 (2)
+//	UCHAR   ReportID;           // offset  2 (1)
+//	BOOLEAN IsAlias;            // offset  3 (1)
+//	USHORT  BitField;           // offset  4 (2)
+//	USHORT  LinkCollection;     // offset  6 (2)
+//	USAGE   LinkUsage;          // offset  8 (2)
+//	USAGE   LinkUsagePage;      // offset 10 (2)
+//	BOOLEAN IsRange;            // offset 12 (1)
+//	BOOLEAN IsStringRange;      // offset 13 (1)
+//	BOOLEAN IsDesignatorRange;  // offset 14 (1)
+//	BOOLEAN IsAbsolute;         // offset 15 (1)
+//	USHORT  ReportCount;        // offset 16 (2)
+//	USHORT  Reserved2;          // offset 18 (2)
+//	ULONG   Reserved[9];        // offset 20 (36) → end 56
+//	union { Range / NotRange }  // offset 56 (16)
+//	Total size: 72 bytes
 type hidpButtonCaps struct {
-	UsagePage           uint16
-	ReportID            uint8
-	IsAlias             uint8
-	BitField            uint16
-	LinkCollection      uint16
-	LinkUsage           uint16
-	LinkUsagePage       uint16
-	IsRange             uint8
-	IsStringRange       uint8
-	IsDesignatorRange   uint8
-	IsAbsolute          uint8
-	SupportedActivities uint16
-	Reserved            [5]uint16
-	UsageMin            uint16
-	UsageMax            uint16
-	StringMin           uint16
-	StringMax           uint16
-	DesignatorMin       uint16
-	DesignatorMax       uint16
-	DataIndexMin        uint16
-	DataIndexMax        uint16
+	UsagePage         uint16
+	ReportID          uint8
+	IsAlias           uint8 // BOOLEAN
+	BitField          uint16
+	LinkCollection    uint16
+	LinkUsage         uint16
+	LinkUsagePage     uint16
+	IsRange           uint8 // BOOLEAN
+	IsStringRange     uint8 // BOOLEAN
+	IsDesignatorRange uint8 // BOOLEAN
+	IsAbsolute        uint8 // BOOLEAN
+	ReportCount       uint16
+	Reserved2         uint16
+	Reserved          [9]uint32
+	// Union (Range variant):
+	UsageMin      uint16
+	UsageMax      uint16
+	StringMin     uint16
+	StringMax     uint16
+	DesignatorMin uint16
+	DesignatorMax uint16
+	DataIndexMin  uint16
+	DataIndexMax  uint16
 }
 
 // ridDeviceInfoHID mirrors the HID portion of RID_DEVICE_INFO.
@@ -434,86 +477,102 @@ func parseHIDReport(dev *hidDeviceInfo, rawData []byte) GamepadState {
 	reportLen := uint32(len(rawData))
 
 	// --- Axes / values ---
+	// A valueCaps entry may cover a range of usages (IsRange=1) or a single usage
+	// (IsRange=0). We must iterate every usage within [UsageMin, UsageMax] to
+	// avoid silently dropping axes when a controller packs multiple axes into one
+	// caps entry (common on many HID gamepads).
 	for i := range dev.valueCaps {
 		vc := &dev.valueCaps[i]
 
-		// Determine the usage code to look up in the axis map.
-		usage := vc.UsageMin // for non-range caps this equals the single usage
+		usageMin := vc.UsageMin
+		usageMax := vc.UsageMax
+		if vc.IsRange == 0 || usageMax < usageMin {
+			// Single-usage cap: UsageMin == UsageMax == the single usage.
+			usageMax = usageMin
+		}
 
-		if vc.UsagePage == usagePageGenericDesktop && usage == hidUsageHat {
-			// Hat switch → D-pad
+		for usage := usageMin; usage <= usageMax; usage++ {
+			if vc.UsagePage == usagePageGenericDesktop && usage == hidUsageHat {
+				// Hat switch → D-pad
+				var value uint32
+				status, _, _ := procHidPGetUsageValue.Call(
+					hidpInput,
+					uintptr(vc.UsagePage),
+					0, // link collection (0 = search all)
+					uintptr(usage),
+					uintptr(unsafe.Pointer(&value)),
+					ppd,
+					reportPtr,
+					uintptr(reportLen),
+				)
+				if status != hidpStatusSuccess {
+					continue
+				}
+				// Hat values: LogicalMin..LogicalMin+7 = directions, anything else = centred.
+				idx := int(value) - int(vc.LogicalMin)
+				if idx >= 0 && idx < 8 {
+					dirs := hatDirTable[idx]
+					state.Dpad.Up = dirs[0]
+					state.Dpad.Down = dirs[1]
+					state.Dpad.Left = dirs[2]
+					state.Dpad.Right = dirs[3]
+				}
+				// else: centred — leave Dpad at zero (already default)
+				continue
+			}
+
+			target, ok := dev.axisMap[usage]
+			if !ok {
+				continue
+			}
+
 			var value uint32
-			procHidPGetUsageValue.Call(
+			status, _, _ := procHidPGetUsageValue.Call(
 				hidpInput,
 				uintptr(vc.UsagePage),
-				0, // link collection
+				0,
 				uintptr(usage),
 				uintptr(unsafe.Pointer(&value)),
 				ppd,
 				reportPtr,
 				uintptr(reportLen),
 			)
-			idx := int(value) - int(vc.LogicalMin)
-			if idx >= 0 && idx < 8 {
-				dirs := hatDirTable[idx]
-				state.Dpad.Up = dirs[0]
-				state.Dpad.Down = dirs[1]
-				state.Dpad.Left = dirs[2]
-				state.Dpad.Right = dirs[3]
+			if status != hidpStatusSuccess {
+				continue
 			}
-			continue
-		}
 
-		target, ok := dev.axisMap[usage]
-		if !ok {
-			continue
-		}
+			// Normalise: logical range [LogicalMin, LogicalMax] → target range.
+			lMin := vc.LogicalMin
+			lMax := vc.LogicalMax
 
-		var value uint32
-		status, _, _ := procHidPGetUsageValue.Call(
-			hidpInput,
-			uintptr(vc.UsagePage),
-			0,
-			uintptr(usage),
-			uintptr(unsafe.Pointer(&value)),
-			ppd,
-			reportPtr,
-			uintptr(reportLen),
-		)
-		if status != hidpStatusSuccess {
-			continue
-		}
+			// Some controllers report LogicalMax < LogicalMin due to sign-extension
+			// from a smaller type. Detect and correct using BitSize.
+			if lMax < lMin && vc.BitSize > 0 && vc.BitSize < 32 {
+				lMax = (1 << vc.BitSize) - 1
+				lMin = 0
+			}
 
-		// Normalise: logical range [LogicalMin, LogicalMax] → target range.
-		lMin := vc.LogicalMin
-		lMax := vc.LogicalMax
+			isTrigger := target == "lt" || target == "rt"
+			normalized := normalizeHIDAxis(value, lMin, lMax, isTrigger)
+			normalized = applyDeadzone(normalized, deadzone)
 
-		// Some controllers report LogicalMax < LogicalMin due to sign-extension
-		// from a smaller type. Detect and correct using BitSize.
-		if lMax < lMin && vc.BitSize > 0 && vc.BitSize < 32 {
-			lMax = (1 << vc.BitSize) - 1
-			lMin = 0
-		}
-
-		isTrigger := target == "lt" || target == "rt"
-		normalized := normalizeHIDAxis(value, lMin, lMax, isTrigger)
-		normalized = applyDeadzone(normalized, deadzone)
-
-		switch target {
-		case "left_x":
-			state.Sticks.Left.Position.X = normalized
-		case "left_y":
-			// HID Y axes are typically positive-down; frontend also positive-down.
-			// No inversion needed here (unlike XInput which is positive-up).
-			state.Sticks.Left.Position.Y = normalized
-		case "right_x":
-			state.Sticks.Right.Position.X = normalized
-		case "right_y":
-			state.Sticks.Right.Position.Y = normalized
-		case "lt":
-			state.Triggers.LT.Value = normalized
-		case "rt":
-			state.Triggers.RT.Value = normalized
+			switch target {
+			case "left_x":
+				state.Sticks.Left.Position.X = normalized
+			case "left_y":
+				// HID Y axes are positive-down, but the frontend canvas renderer
+				// inverts Y (knobY = s.y - position.y * maxTravel), so we negate
+				// here to match the XInput convention (positive-up).
+				state.Sticks.Left.Position.Y = -normalized
+			case "right_x":
+				state.Sticks.Right.Position.X = normalized
+			case "right_y":
+				state.Sticks.Right.Position.Y = -normalized
+			case "lt":
+				state.Triggers.LT.Value = normalized
+			case "rt":
+				state.Triggers.RT.Value = normalized
+			}
 		}
 	}
 

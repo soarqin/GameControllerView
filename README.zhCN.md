@@ -2,9 +2,21 @@
 
 实时游戏手柄、键盘和鼠标输入可视化工具。Go 后端读取输入，通过 WebSocket 推送到浏览器，Canvas 实时渲染。
 
+## 平台支持
+
+| 功能 | Windows | Linux | macOS |
+|------|---------|-------|-------|
+| Xbox / XInput 手柄 | ✅ | ❌ | ❌ |
+| PS4 / PS5 / Switch Pro / HID 手柄 | ✅ | ❌ | ❌ |
+| 键盘和鼠标捕获 | ✅ | ❌ | ❌ |
+| Web UI（浏览器渲染） | ✅ | ✅ | ✅ |
+| 系统托盘 | ✅ | ❌ | ❌ |
+
+> 非 Windows 平台可以编译并运行 Web UI，但所有输入捕获（手柄、键盘、鼠标）均为 Windows 专有功能。跨平台输入支持可能在未来版本中加入。
+
 ## 功能特性
 
-- **手柄可视化** — 支持 Xbox、PlayStation、Switch Pro 及 550+ 设备（VID/PID 映射）
+- **手柄可视化** — Xbox / XInput 手柄通过 XInput API；PS4、PS5、Switch Pro 及 550+ 其他设备通过 Windows Raw Input HID API（VID/PID 映射）
 - **键盘和鼠标可视化** — 通过 Windows Raw Input API 全局捕获；InputView 在后台或 OBS 浏览器源中时同样有效
 - **多手柄支持** — 多个浏览器标签页，每个显示不同手柄
 - **Input Overlay 支持** — 兼容 [Input Overlay](https://github.com/univrsal/input-overlay) 的 `.json` + `.png` 纹理图集预设，支持全部 10 种元素类型
@@ -15,8 +27,10 @@
 
 ## 环境要求
 
-- **Windows** — 手柄输入使用 XInput（Windows 8+ 内置，`xinput1_4.dll`），无需额外 DLL
-- 键盘/鼠标捕获同样需要 Windows（Raw Input API）
+- **Windows**（8+）— 所有输入捕获功能均需要 Windows
+  - 手柄：Xbox 控制器使用 XInput（`xinput1_4.dll`，系统内置）；PS4/PS5/Switch Pro/通用 HID 使用 `hid.dll`（系统内置）
+  - 键盘和鼠标：Raw Input API（系统内置）
+  - 无需任何额外 DLL
 
 ## 快速开始
 
@@ -119,8 +133,8 @@ cmd/
   gpvskin2overlay/    # GPV 皮肤转换器 CLI
 internal/
   input/              # KeyMouseState 数据模型，扫描码映射（Raw Input → uiohook）
-  rawinput/           # Windows Raw Input API 读取器（键盘 + 鼠标，全局捕获）
-  gamepad/            # SDL3 手柄读取器，VID/PID 设备映射表（550+ 条目）
+  rawinput/           # Windows Raw Input API 读取器（键盘 + 鼠标 + HID 路由）
+  gamepad/            # XInput + HID 手柄读取器，VID/PID 设备映射表（550+ 条目）
   hub/                # WebSocket Hub、广播器、客户端管理
   server/             # HTTP 服务器，WebSocket 升级
   tray/               # Windows 系统托盘集成
@@ -135,10 +149,12 @@ docs/                 # 格式规范和使用指南
 ### 线程模型
 
 ```
-goroutine: gamepad.Reader.Run(ctx)    ← SDL3 手柄轮询 (~60Hz)
+goroutine: gamepad.Reader.Run(ctx)    ← XInput 轮询 (~60Hz，槽位 0-3)
                                            ↓ chan GamepadState
 goroutine: rawinput.Reader.Run(ctx)   ← Windows Raw Input（键盘 + 鼠标，全局捕获）
-                                           ↓ chan KeyMouseState (~60Hz)
+   ├── WM_INPUT 键盘/鼠标             → chan KeyMouseState (~60Hz)
+   └── WM_INPUT HID 手柄              → gamepad.Reader HID 回调（PS4/PS5/Switch Pro）
+                                           ↓ chan GamepadState（同一通道）
 goroutine: Broadcaster.Run()          ← 计算增量，广播给 WebSocket 客户端
 goroutine: Hub.Run()                  ← WebSocket 客户端注册/注销
 goroutine: HTTP Server                ← 静态文件 + /ws WebSocket 端点
@@ -175,17 +191,17 @@ goroutine: HTTP Server                ← 静态文件 + /ws WebSocket 端点
 
 ### 添加新手柄支持
 
-1. `internal/gamepad/mapping.go` — 在 `knownDevices` 中添加 VID/PID → `DeviceMapping`
+1. `internal/gamepad/mapping_table.go` — 在 `knownDevices` 中添加 VID/PID → `DeviceMapping`
 2. `internal/web/frontend/configs/` — 添加布局 JSON
 3. `internal/web/frontend/app.js` — 在 `configMap` 中添加映射
 
 ### 修改轮询频率
 
-`internal/gamepad/reader.go` 中的 `pollDelayNS`（默认 16ms ≈ 60Hz）。
+`internal/gamepad/reader_windows.go` 中的 `pollDelay`（默认 16ms ≈ 60Hz）。
 
 ### 修改死区
 
-`internal/gamepad/reader.go` 中的 `deadzone`（默认 0.05）；`internal/gamepad/state.go` 中的 `analogThreshold`（默认 0.01）。
+`internal/gamepad/reader_windows.go` 中的 `deadzone`（默认 0.05）；`internal/gamepad/state.go` 中的 `analogThreshold`（默认 0.01）。
 
 ## 许可证
 

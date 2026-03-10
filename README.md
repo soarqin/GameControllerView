@@ -2,9 +2,21 @@
 
 Real-time gamepad, keyboard, and mouse input visualizer. Go backend reads input and pushes state to a browser frontend via WebSocket for live Canvas rendering.
 
+## Platform Support
+
+| Feature | Windows | Linux | macOS |
+|---------|---------|-------|-------|
+| Xbox / XInput controllers | ✅ | ❌ | ❌ |
+| PS4 / PS5 / Switch Pro / HID gamepads | ✅ | ❌ | ❌ |
+| Keyboard & mouse capture | ✅ | ❌ | ❌ |
+| Web UI (browser rendering) | ✅ | ✅ | ✅ |
+| System tray | ✅ | ❌ | ❌ |
+
+> Non-Windows platforms can build and serve the web UI, but all input capture (gamepad, keyboard, mouse) is Windows-only. Cross-platform input support may be added in a future release.
+
 ## Features
 
-- **Gamepad visualization** — Xbox, PlayStation, Switch Pro, and 550+ devices via VID/PID mapping
+- **Gamepad visualization** — Xbox / XInput controllers via XInput API; PS4, PS5, Switch Pro, and 550+ other devices via Windows Raw Input HID API (VID/PID mapping)
 - **Keyboard & Mouse visualization** — Global capture via Windows Raw Input API; works when InputView is in the background or in an OBS browser source
 - **Multi-controller support** — Multiple browser tabs, each showing a different controller
 - **Input Overlay support** — Drop-in compatible with [Input Overlay](https://github.com/univrsal/input-overlay) `.json` + `.png` texture atlas presets; all 10 element types supported
@@ -15,8 +27,10 @@ Real-time gamepad, keyboard, and mouse input visualizer. Go backend reads input 
 
 ## Requirements
 
-- **Windows** — gamepad input uses XInput (built into Windows 8+, `xinput1_4.dll`); no external DLL required
-- Windows also required for keyboard/mouse capture (Raw Input API)
+- **Windows** (8+) — required for all input capture
+  - Gamepad: XInput (`xinput1_4.dll`, built-in) for Xbox controllers; `hid.dll` (built-in) for PS4/PS5/Switch Pro/generic HID
+  - Keyboard & mouse: Raw Input API (built-in)
+  - No external DLL required
 
 ## Quick Start
 
@@ -119,8 +133,8 @@ cmd/
   gpvskin2overlay/    # GPV skin converter CLI
 internal/
   input/              # KeyMouseState model, scancode mapping (Raw Input → uiohook)
-  rawinput/           # Windows Raw Input API reader (keyboard + mouse, global capture)
-  gamepad/            # SDL3 joystick reader, VID/PID device mapping table (550+ entries)
+  rawinput/           # Windows Raw Input API reader (keyboard + mouse + HID routing)
+  gamepad/            # XInput + HID gamepad reader, VID/PID device mapping (550+ entries)
   hub/                # WebSocket hub, broadcaster, client management
   server/             # HTTP server, WebSocket upgrade
   tray/               # Windows system tray integration
@@ -135,10 +149,12 @@ docs/                 # Format specs and guides
 ### Thread Model
 
 ```
-goroutine: gamepad.Reader.Run(ctx)    ← SDL3 joystick polling (~60Hz)
+goroutine: gamepad.Reader.Run(ctx)    ← XInput polling (~60Hz, slots 0-3)
                                            ↓ chan GamepadState
 goroutine: rawinput.Reader.Run(ctx)   ← Windows Raw Input (keyboard + mouse, global)
-                                           ↓ chan KeyMouseState (~60Hz)
+   ├── WM_INPUT keyboard/mouse        → chan KeyMouseState (~60Hz)
+   └── WM_INPUT HID gamepad           → gamepad.Reader HID callbacks (PS4/PS5/Switch Pro)
+                                           ↓ chan GamepadState (same channel)
 goroutine: Broadcaster.Run()          ← Computes deltas, broadcasts to WebSocket clients
 goroutine: Hub.Run()                  ← WebSocket client registration / unregistration
 goroutine: HTTP Server                ← Static files + /ws WebSocket endpoint
@@ -173,17 +189,17 @@ goroutine: HTTP Server                ← Static files + /ws WebSocket endpoint
 
 ### Adding a New Controller
 
-1. `internal/gamepad/mapping.go` — add VID/PID → `DeviceMapping` to `knownDevices`
+1. `internal/gamepad/mapping_table.go` — add VID/PID → `DeviceMapping` to `knownDevices`
 2. `internal/web/frontend/configs/` — add layout JSON
 3. `internal/web/frontend/app.js` — add entry to `configMap`
 
 ### Changing Poll Rate
 
-`pollDelayNS` in `internal/gamepad/reader.go` (default 16ms ≈ 60Hz).
+`pollDelay` in `internal/gamepad/reader_windows.go` (default 16ms ≈ 60Hz).
 
 ### Changing Deadzone
 
-`deadzone` in `internal/gamepad/reader.go` (default 0.05); `analogThreshold` in `internal/gamepad/state.go` (default 0.01).
+`deadzone` in `internal/gamepad/reader_windows.go` (default 0.05); `analogThreshold` in `internal/gamepad/state.go` (default 0.01).
 
 ## License
 

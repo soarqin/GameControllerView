@@ -25,6 +25,20 @@ func main() {
 	// Create gamepad reader
 	reader := gamepad.NewReader()
 
+	// Determine the directory containing this executable early (needed for SDL DB path).
+	appExeDir := "."
+	if exe, err := os.Executable(); err == nil {
+		appExeDir = filepath.Dir(exe)
+	} else {
+		log.Printf("Warning: could not determine executable path: %v", err)
+	}
+
+	// Load SDL GameControllerDB. The embedded database is always used as a base;
+	// an external gamecontrollerdb.txt next to the executable (if present) is
+	// merged on top so users can update mappings without recompiling.
+	sdlDBPath := filepath.Join(appExeDir, "gamecontrollerdb.txt")
+	gamepad.LoadSDLDB(sdlDBPath)
+
 	// Set up shutdown handling (console Ctrl+C or system tray, depending on build mode).
 	extraShutdownCh := setupShutdown()
 
@@ -48,15 +62,6 @@ func main() {
 	// Create broadcaster (listens to both gamepad and keyboard/mouse channels)
 	broadcaster := hub.NewBroadcaster(h, reader.Changes(), kmReader.Changes())
 	go broadcaster.Run()
-
-	// Determine the directory containing this executable.
-	// Used for locating the external overlays/ directory next to the binary.
-	appExeDir := "."
-	if exe, err := os.Executable(); err == nil {
-		appExeDir = filepath.Dir(exe)
-	} else {
-		log.Printf("Warning: could not determine executable path: %v", err)
-	}
 
 	// Create and start HTTP server
 	srv := server.New(h, broadcaster, reader, web.FrontendFS(), appExeDir, ":8080")

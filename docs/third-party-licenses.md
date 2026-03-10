@@ -1,5 +1,31 @@
 # Third-Party Licenses
 
+## SDL_GameControllerDB (Embedded)
+
+`internal/gamepad/gamecontrollerdb.txt` is bundled from the
+[SDL_GameControllerDB](https://github.com/mdqinc/SDL_GameControllerDB) project
+and is embedded in the InputView binary at compile time.
+
+> Copyright (C) 1997-2025 Sam Lantinga \<slouken@libsdl.org\>
+>
+> This software is provided 'as-is', without any express or implied
+> warranty. In no event will the authors be held liable for any damages
+> arising from the use of this software.
+>
+> Permission is granted to anyone to use this software for any purpose,
+> including commercial applications, and to alter it and redistribute it
+> freely, subject to the following restrictions:
+>
+> 1. The origin of this software must not be misrepresented; you must not
+>    claim that you wrote the original software. If you use this software
+>    in a product, an acknowledgment in the product documentation would be
+>    appreciated but is not required.
+> 2. Altered source versions must be plainly marked as such, and must not be
+>    misrepresented as being the original software.
+> 3. This notice may not be removed or altered from any source distribution.
+
+---
+
 ## Input Overlay Presets
 
 The preset files for [Input Overlay](https://github.com/univrsal/input-overlay) (`dualsense`, `xbox-one-controller`, etc.) are **not** part of this repository and are **not** distributed with InputView binaries.
@@ -46,13 +72,13 @@ Download and place them in `overlays/<preset-name>/` next to the executable. See
 
 ---
 
-## Other Dependencies
+## Go Module Dependencies
 
-All Go module dependencies used by InputView carry licenses compatible with the MIT License. See `go.sum` for the full dependency list.
+All Go module dependencies carry licenses compatible with the MIT License. See `go.sum` for the full dependency list.
 
 | Package | License |
 |---------|---------|
-| `github.com/lxzan/gws` | MIT |
+| `github.com/lxzan/gws` | Apache-2.0 |
 | `github.com/klauspost/compress` | BSD-3-Clause |
-| `fyne.io/systray` | MIT |
+| `fyne.io/systray` | Apache-2.0 |
 | `github.com/godbus/dbus/v5` | BSD-2-Clause |

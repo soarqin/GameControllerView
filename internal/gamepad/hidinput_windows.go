@@ -25,8 +25,8 @@ var (
 	procHidPGetUsageValue = modHid.NewProc("HidP_GetUsageValue")
 )
 
-// GetRawInputDeviceInfoW is also used in rawinput package; we bind it separately here
-// to keep the gamepad package self-contained.
+// GetRawInputDeviceInfoW is also used in rawinput package; we bind it separately
+// here to keep the gamepad package self-contained.
 var (
 	modUser32HID           = syscall.NewLazyDLL("user32.dll")
 	procGetRawInputDevInfo = modUser32HID.NewProc("GetRawInputDeviceInfoW")
@@ -38,25 +38,11 @@ const hidpInput = 0
 // HIDP_STATUS_SUCCESS is the success return value from HidP_* functions.
 const hidpStatusSuccess = 0x00110000
 
-// HID Usage Page / Usage constants
+// Windows-only HID usage IDs for gamepad registration (joystick / gamepad).
+// usagePageGenericDesktop, hidUsage*, etc. are in hidinput_shared.go.
 const (
-	usagePageGenericDesktop = 0x01
-	usageJoystick           = 0x04
-	usageGamepad            = 0x05
-
-	// HID Generic Desktop axis usages
-	hidUsageX      = 0x30
-	hidUsageY      = 0x31
-	hidUsageZ      = 0x32
-	hidUsageRx     = 0x33
-	hidUsageRy     = 0x34
-	hidUsageRz     = 0x35
-	hidUsageSlider = 0x36
-	hidUsageDial   = 0x37
-	hidUsageHat    = 0x39
-
-	// HID Button usage page
-	usagePageButton = 0x09
+	usageJoystick = 0x04
+	usageGamepad  = 0x05
 )
 
 // GetRawInputDeviceInfo commands (duplicated from rawinput package; avoid import cycle)
@@ -198,7 +184,8 @@ type hidpButtonCaps struct {
 	DataIndexMax  uint16
 }
 
-// ridDeviceInfoHID mirrors the HID portion of RID_DEVICE_INFO.
+// ridDeviceInfoBuf is a raw buffer for RID_DEVICE_INFO.
+//
 // Full RID_DEVICE_INFO layout:
 //
 //	DWORD cbSize   (offset 0)
@@ -224,6 +211,7 @@ type hidDeviceInfo struct {
 	vendorID  uint16
 	productID uint16
 	mapping   *DeviceMapping
+	sdlMap    *SDLMapping // SDL gamecontrollerdb mapping (may be nil)
 	name      string
 	isXInput  bool // filtered out: device is an XInput virtual HID
 	isInvalid bool // failed to initialise; skip future events
@@ -234,7 +222,12 @@ type hidDeviceInfo struct {
 	valueCaps  []hidpValueCaps
 	buttonCaps []hidpButtonCaps
 
-	// Resolved axis map: HID usage → semantic target
+	// axisOrder is the ordered list of value-cap entries (one per usage),
+	// expanded from ranges, hat switch excluded.
+	// SDL axis index N → axisOrder[N].
+	axisOrder []hidAxisEntry
+
+	// Resolved axis map: HID usage → semantic target (used when sdlMap is nil)
 	axisMap map[uint16]string
 
 	// Button count (max usage in button caps range)
@@ -242,49 +235,34 @@ type hidDeviceInfo struct {
 }
 
 // ---------------------------------------------------------------------------
-// isXInputDevice checks if a device path contains "IG_" which marks XInput
-// virtual HID devices. These are handled by XInput; we skip them in HID.
+// isXInputDevice — skip XInput virtual HID devices
 // ---------------------------------------------------------------------------
 
 func isXInputDevice(hDevice uintptr) bool {
-	// First call: get required buffer size.
 	var size uint32
-	procGetRawInputDevInfo.Call(
-		hDevice,
-		ridiDevNameHID,
-		0,
-		uintptr(unsafe.Pointer(&size)),
-	)
+	procGetRawInputDevInfo.Call(hDevice, ridiDevNameHID, 0, uintptr(unsafe.Pointer(&size)))
 	if size == 0 {
 		return false
 	}
-
-	// Second call: get the device name (UTF-16 string).
 	buf := make([]uint16, size)
 	ret, _, _ := procGetRawInputDevInfo.Call(
-		hDevice,
-		ridiDevNameHID,
-		uintptr(unsafe.Pointer(&buf[0])),
-		uintptr(unsafe.Pointer(&size)),
+		hDevice, ridiDevNameHID,
+		uintptr(unsafe.Pointer(&buf[0])), uintptr(unsafe.Pointer(&size)),
 	)
 	if ret == ^uintptr(0) {
 		return false
 	}
-
-	// Convert to Go string and check for "IG_" marker.
 	name := string(utf16.Decode(buf))
 	return strings.Contains(strings.ToUpper(name), "IG_")
 }
 
 // ---------------------------------------------------------------------------
-// initHIDDevice queries all capabilities for a device handle and builds the
-// hidDeviceInfo cache entry. Returns nil if the device should be skipped.
+// initHIDDevice — build hidDeviceInfo cache entry for a device handle
 // ---------------------------------------------------------------------------
 
 func initHIDDevice(hDevice uintptr) *hidDeviceInfo {
 	dev := &hidDeviceInfo{hDevice: hDevice}
 
-	// Check for XInput virtual device.
 	if isXInputDevice(hDevice) {
 		dev.isXInput = true
 		return dev
@@ -294,10 +272,8 @@ func initHIDDevice(hDevice uintptr) *hidDeviceInfo {
 	var infoBuf ridDeviceInfoBuf
 	infoSize := uint32(len(infoBuf))
 	ret, _, _ := procGetRawInputDevInfo.Call(
-		hDevice,
-		ridiDevInfoHID,
-		uintptr(unsafe.Pointer(&infoBuf[0])),
-		uintptr(unsafe.Pointer(&infoSize)),
+		hDevice, ridiDevInfoHID,
+		uintptr(unsafe.Pointer(&infoBuf[0])), uintptr(unsafe.Pointer(&infoSize)),
 	)
 	if ret == ^uintptr(0) {
 		log.Printf("hidinput: GetRawInputDeviceInfo(RIDI_DEVICEINFO) failed for hDevice=0x%x", hDevice)
@@ -305,40 +281,29 @@ func initHIDDevice(hDevice uintptr) *hidDeviceInfo {
 		return dev
 	}
 
-	// Parse RID_DEVICE_INFO_HID fields (see layout comment above).
 	dwType := *(*uint32)(unsafe.Pointer(&infoBuf[4]))
 	if dwType != 2 { // not a HID device
 		dev.isInvalid = true
 		return dev
 	}
-	dev.vendorID = *(*uint16)(unsafe.Pointer(&infoBuf[8]))   // dwVendorId low word
-	dev.productID = *(*uint16)(unsafe.Pointer(&infoBuf[12])) // dwProductId low word
+	dev.vendorID = *(*uint16)(unsafe.Pointer(&infoBuf[8]))
+	dev.productID = *(*uint16)(unsafe.Pointer(&infoBuf[12]))
 
-	// Resolve device mapping via VID/PID table.
 	dev.mapping = GetMapping(dev.vendorID, dev.productID)
 	dev.name = fmt.Sprintf("%s (VID_%04X&PID_%04X)", dev.mapping.Name, dev.vendorID, dev.productID)
 
 	// Get preparsed data (needed for HidP_* calls).
 	var prepSize uint32
-	procGetRawInputDevInfo.Call(
-		hDevice,
-		ridiPreparsed,
-		0,
-		uintptr(unsafe.Pointer(&prepSize)),
-	)
+	procGetRawInputDevInfo.Call(hDevice, ridiPreparsed, 0, uintptr(unsafe.Pointer(&prepSize)))
 	if prepSize == 0 {
 		log.Printf("hidinput: no preparsed data for %s", dev.name)
 		dev.isInvalid = true
 		return dev
 	}
-	// Preparsed data must be aligned to at least 8 bytes.
-	// make([]byte) aligns to 8 bytes on all supported Go runtime architectures.
 	dev.preparsedData = make([]byte, prepSize)
 	ret, _, _ = procGetRawInputDevInfo.Call(
-		hDevice,
-		ridiPreparsed,
-		uintptr(unsafe.Pointer(&dev.preparsedData[0])),
-		uintptr(unsafe.Pointer(&prepSize)),
+		hDevice, ridiPreparsed,
+		uintptr(unsafe.Pointer(&dev.preparsedData[0])), uintptr(unsafe.Pointer(&prepSize)),
 	)
 	if ret == ^uintptr(0) {
 		log.Printf("hidinput: GetRawInputDeviceInfo(RIDI_PREPARSEDDATA) failed for %s", dev.name)
@@ -348,7 +313,6 @@ func initHIDDevice(hDevice uintptr) *hidDeviceInfo {
 
 	ppd := uintptr(unsafe.Pointer(&dev.preparsedData[0]))
 
-	// Get top-level collection capabilities.
 	status, _, _ := procHidPGetCaps.Call(ppd, uintptr(unsafe.Pointer(&dev.caps)))
 	if status != hidpStatusSuccess {
 		log.Printf("hidinput: HidP_GetCaps failed (0x%08x) for %s", status, dev.name)
@@ -356,7 +320,6 @@ func initHIDDevice(hDevice uintptr) *hidDeviceInfo {
 		return dev
 	}
 
-	// Get value caps (axes, triggers, hat switch).
 	if dev.caps.NumberInputValueCaps > 0 {
 		dev.valueCaps = make([]hidpValueCaps, dev.caps.NumberInputValueCaps)
 		vcLen := uint16(dev.caps.NumberInputValueCaps)
@@ -369,7 +332,6 @@ func initHIDDevice(hDevice uintptr) *hidDeviceInfo {
 		dev.valueCaps = dev.valueCaps[:vcLen]
 	}
 
-	// Get button caps.
 	if dev.caps.NumberInputButtonCaps > 0 {
 		dev.buttonCaps = make([]hidpButtonCaps, dev.caps.NumberInputButtonCaps)
 		bcLen := uint16(dev.caps.NumberInputButtonCaps)
@@ -382,93 +344,78 @@ func initHIDDevice(hDevice uintptr) *hidDeviceInfo {
 		dev.buttonCaps = dev.buttonCaps[:bcLen]
 	}
 
-	// Determine button count from button caps.
 	for _, bc := range dev.buttonCaps {
 		if bc.UsagePage == usagePageButton {
-			max := bc.UsageMax
-			if max > dev.buttonCount {
-				dev.buttonCount = max
+			if bc.UsageMax > dev.buttonCount {
+				dev.buttonCount = bc.UsageMax
 			}
 		}
 	}
 
-	// Build axis map: HID usage → semantic target.
-	dev.axisMap = buildAxisMap(dev.mapping)
+	// Build ordered axis list (SDL axis index → HID usage).
+	dev.axisOrder = buildAxisOrder(dev.valueCaps)
 
-	log.Printf("hidinput: initialised %s — axes=%d buttons=%d",
-		dev.name, len(dev.valueCaps), dev.buttonCount)
+	// Look up SDL mapping by VID/PID.
+	dev.sdlMap = lookupSDLMapping(dev.vendorID, dev.productID)
+
+	if dev.sdlMap != nil {
+		dev.name = fmt.Sprintf("%s (VID_%04X&PID_%04X)", dev.sdlMap.Name, dev.vendorID, dev.productID)
+		log.Printf("hidinput: initialised %s — sdlAxes=%d sdlButtons=%d hid_axes=%d buttons=%d [SDL DB]",
+			dev.name, len(dev.sdlMap.Axes), len(dev.sdlMap.Buttons), len(dev.axisOrder), dev.buttonCount)
+	} else {
+		dev.axisMap = buildAxisMap(dev.mapping)
+		log.Printf("hidinput: initialised %s — axes=%d buttons=%d",
+			dev.name, len(dev.valueCaps), dev.buttonCount)
+	}
 
 	return dev
 }
 
 // ---------------------------------------------------------------------------
-// buildAxisMap constructs the HID usage → semantic axis target mapping.
-// If the DeviceMapping provides an explicit HIDAxes table it takes priority;
-// otherwise a generic default based on common HID axis assignments is used.
+// buildAxisOrder — ordered axis list from value caps (hat switch excluded)
 // ---------------------------------------------------------------------------
 
-// defaultHIDAxes maps the most common HID Generic Desktop axis usages to semantic targets.
-// This covers the majority of gamepads that follow the standard HID usage table.
-// Controllers with unusual layouts should have explicit HIDAxes in their DeviceMapping.
-var defaultHIDAxes = map[uint16]string{
-	hidUsageX:  "left_x",
-	hidUsageY:  "left_y",
-	hidUsageZ:  "rt", // Z is typically the right trigger (or combined on some devices)
-	hidUsageRx: "right_x",
-	hidUsageRy: "right_y",
-	hidUsageRz: "lt", // Rz is typically the left trigger (or right stick Z on some)
-}
-
-func buildAxisMap(mapping *DeviceMapping) map[uint16]string {
-	if mapping != nil && len(mapping.HIDAxes) > 0 {
-		// Use device-specific mapping.
-		m := make(map[uint16]string, len(mapping.HIDAxes))
-		for k, v := range mapping.HIDAxes {
-			m[k] = v
+// buildAxisOrder builds the ordered axis list from value caps (expanding usage
+// ranges). Hat switch entries are excluded — SDL numbers axes and hats as
+// separate arrays, so SDL axis index N corresponds to the N-th non-hat value
+// cap usage.
+func buildAxisOrder(valueCaps []hidpValueCaps) []hidAxisEntry {
+	var entries []hidAxisEntry
+	for i := range valueCaps {
+		vc := &valueCaps[i]
+		usageMin := vc.UsageMin
+		usageMax := vc.UsageMax
+		if vc.IsRange == 0 || usageMax < usageMin {
+			usageMax = usageMin
 		}
-		return m
+		for u := usageMin; u <= usageMax; u++ {
+			if vc.UsagePage == usagePageGenericDesktop && u == hidUsageHat {
+				continue // hat switch is not an SDL axis
+			}
+			entries = append(entries, hidAxisEntry{
+				usagePage:  vc.UsagePage,
+				usage:      u,
+				logicalMin: vc.LogicalMin,
+				logicalMax: vc.LogicalMax,
+				bitSize:    vc.BitSize,
+			})
+		}
 	}
-	// Fall back to generic defaults.
-	m := make(map[uint16]string, len(defaultHIDAxes))
-	for k, v := range defaultHIDAxes {
-		m[k] = v
-	}
-	return m
+	return entries
 }
 
 // ---------------------------------------------------------------------------
-// parseHIDReport converts a raw HID input report into a GamepadState.
+// parseHIDReport — top-level dispatcher
 // ---------------------------------------------------------------------------
-
-// hatToDirections maps the standard HID hat switch values (0-7 = N/NE/E/SE/S/SW/W/NW)
-// to DpadState booleans. Values >= 8 mean centred.
-var hatDirTable = [8][4]bool{
-	// Up    Down   Left   Right
-	{true, false, false, false}, // 0: N
-	{true, false, false, true},  // 1: NE
-	{false, false, false, true}, // 2: E
-	{false, true, false, true},  // 3: SE
-	{false, true, false, false}, // 4: S
-	{false, true, true, false},  // 5: SW
-	{false, false, true, false}, // 6: W
-	{true, false, true, false},  // 7: NW
-}
-
-// defaultButtonOrder is used when a DeviceMapping has no explicit HIDButtons.
-// It matches the most common button ordering for HID gamepads (PlayStation / generic HID).
-var defaultButtonOrder = []string{
-	"x", "a", "b", "y", // buttons 1-4  (PS: Square/Cross/Circle/Triangle)
-	"lb", "rb", // buttons 5-6  (L1/R1)
-	"lt", "rt", // buttons 7-8  (L2/R2 as digital — rare, mostly analog)
-	"back", "start", // buttons 9-10 (Share/Options / Select/Start)
-	"ls", "rs", // buttons 11-12 (L3/R3)
-	"guide", "touchpad", // buttons 13-14 (PS/Home, Touchpad)
-}
 
 func parseHIDReport(dev *hidDeviceInfo, rawData []byte) GamepadState {
+	controllerType := dev.mapping.Name
+	if dev.sdlMap != nil {
+		controllerType = sdlNameToControllerType(dev.sdlMap.Name)
+	}
 	state := GamepadState{
 		Connected:      true,
-		ControllerType: dev.mapping.Name,
+		ControllerType: controllerType,
 		Name:           dev.name,
 	}
 
@@ -476,56 +423,34 @@ func parseHIDReport(dev *hidDeviceInfo, rawData []byte) GamepadState {
 	reportPtr := uintptr(unsafe.Pointer(&rawData[0]))
 	reportLen := uint32(len(rawData))
 
-	// --- Axes / values ---
-	// A valueCaps entry may cover a range of usages (IsRange=1) or a single usage
-	// (IsRange=0). We must iterate every usage within [UsageMin, UsageMax] to
-	// avoid silently dropping axes when a controller packs multiple axes into one
-	// caps entry (common on many HID gamepads).
+	parseHatSwitch(dev, &state, ppd, reportPtr, reportLen)
+	pressedButtons := collectPressedButtons(dev, ppd, reportPtr, reportLen)
+
+	if dev.sdlMap != nil {
+		parseHIDReportSDL(dev, &state, ppd, reportPtr, reportLen, pressedButtons)
+	} else {
+		parseHIDReportLegacy(dev, &state, ppd, reportPtr, reportLen, pressedButtons)
+	}
+
+	return state
+}
+
+// ---------------------------------------------------------------------------
+// parseHatSwitch — read hat switch and set state.Dpad
+// ---------------------------------------------------------------------------
+
+func parseHatSwitch(dev *hidDeviceInfo, state *GamepadState, ppd, reportPtr uintptr, reportLen uint32) {
 	for i := range dev.valueCaps {
 		vc := &dev.valueCaps[i]
-
 		usageMin := vc.UsageMin
 		usageMax := vc.UsageMax
 		if vc.IsRange == 0 || usageMax < usageMin {
-			// Single-usage cap: UsageMin == UsageMax == the single usage.
 			usageMax = usageMin
 		}
-
 		for usage := usageMin; usage <= usageMax; usage++ {
-			if vc.UsagePage == usagePageGenericDesktop && usage == hidUsageHat {
-				// Hat switch → D-pad
-				var value uint32
-				status, _, _ := procHidPGetUsageValue.Call(
-					hidpInput,
-					uintptr(vc.UsagePage),
-					0, // link collection (0 = search all)
-					uintptr(usage),
-					uintptr(unsafe.Pointer(&value)),
-					ppd,
-					reportPtr,
-					uintptr(reportLen),
-				)
-				if status != hidpStatusSuccess {
-					continue
-				}
-				// Hat values: LogicalMin..LogicalMin+7 = directions, anything else = centred.
-				idx := int(value) - int(vc.LogicalMin)
-				if idx >= 0 && idx < 8 {
-					dirs := hatDirTable[idx]
-					state.Dpad.Up = dirs[0]
-					state.Dpad.Down = dirs[1]
-					state.Dpad.Left = dirs[2]
-					state.Dpad.Right = dirs[3]
-				}
-				// else: centred — leave Dpad at zero (already default)
+			if vc.UsagePage != usagePageGenericDesktop || usage != hidUsageHat {
 				continue
 			}
-
-			target, ok := dev.axisMap[usage]
-			if !ok {
-				continue
-			}
-
 			var value uint32
 			status, _, _ := procHidPGetUsageValue.Call(
 				hidpInput,
@@ -538,50 +463,29 @@ func parseHIDReport(dev *hidDeviceInfo, rawData []byte) GamepadState {
 				uintptr(reportLen),
 			)
 			if status != hidpStatusSuccess {
-				continue
+				return
 			}
-
-			// Normalise: logical range [LogicalMin, LogicalMax] → target range.
-			lMin := vc.LogicalMin
-			lMax := vc.LogicalMax
-
-			// Some controllers report LogicalMax < LogicalMin due to sign-extension
-			// from a smaller type. Detect and correct using BitSize.
-			if lMax < lMin && vc.BitSize > 0 && vc.BitSize < 32 {
-				lMax = (1 << vc.BitSize) - 1
-				lMin = 0
+			idx := int(value) - int(vc.LogicalMin)
+			if idx >= 0 && idx < 8 {
+				dirs := hatDirTable[idx]
+				state.Dpad.Up = dirs[0]
+				state.Dpad.Down = dirs[1]
+				state.Dpad.Left = dirs[2]
+				state.Dpad.Right = dirs[3]
 			}
-
-			isTrigger := target == "lt" || target == "rt"
-			normalized := normalizeHIDAxis(value, lMin, lMax, isTrigger)
-			normalized = applyDeadzone(normalized, deadzone)
-
-			switch target {
-			case "left_x":
-				state.Sticks.Left.Position.X = normalized
-			case "left_y":
-				// HID Y axes are positive-down, but the frontend canvas renderer
-				// inverts Y (knobY = s.y - position.y * maxTravel), so we negate
-				// here to match the XInput convention (positive-up).
-				state.Sticks.Left.Position.Y = -normalized
-			case "right_x":
-				state.Sticks.Right.Position.X = normalized
-			case "right_y":
-				state.Sticks.Right.Position.Y = -normalized
-			case "lt":
-				state.Triggers.LT.Value = normalized
-			case "rt":
-				state.Triggers.RT.Value = normalized
-			}
+			return
 		}
 	}
+}
 
-	// --- Buttons ---
+// ---------------------------------------------------------------------------
+// collectPressedButtons — get 1-based HID button usages that are pressed
+// ---------------------------------------------------------------------------
+
+func collectPressedButtons(dev *hidDeviceInfo, ppd, reportPtr uintptr, reportLen uint32) []uint16 {
 	if len(dev.buttonCaps) == 0 {
-		return state
+		return nil
 	}
-
-	// Collect all pressed button usages from the button usage page.
 	maxButtons := uint32(dev.buttonCount)
 	if maxButtons == 0 {
 		maxButtons = 32
@@ -604,13 +508,160 @@ func parseHIDReport(dev *hidDeviceInfo, rawData []byte) GamepadState {
 			reportPtr,
 			uintptr(reportLen),
 		)
-		usageLen = uLen
+		if uLen < usageLen {
+			return usageList[:uLen]
+		}
 		break
 	}
+	end := len(usageList)
+	for end > 0 && usageList[end-1] == 0 {
+		end--
+	}
+	return usageList[:end]
+}
 
-	// Map pressed button usages to GamepadState fields.
-	for i := uint32(0); i < usageLen; i++ {
-		buttonUsage := usageList[i]
+// ---------------------------------------------------------------------------
+// parseHIDReportSDL — SDL gamecontrollerdb mapping path
+// ---------------------------------------------------------------------------
+
+func parseHIDReportSDL(dev *hidDeviceInfo, state *GamepadState, ppd, reportPtr uintptr, reportLen uint32, pressedButtons []uint16) {
+	sm := dev.sdlMap
+
+	// --- Axes ---
+	for _, ab := range sm.Axes {
+		if ab.AxisIndex < 0 || ab.AxisIndex >= len(dev.axisOrder) {
+			continue
+		}
+		ae := &dev.axisOrder[ab.AxisIndex]
+
+		var rawVal uint32
+		status, _, _ := procHidPGetUsageValue.Call(
+			hidpInput,
+			uintptr(ae.usagePage),
+			0,
+			uintptr(ae.usage),
+			uintptr(unsafe.Pointer(&rawVal)),
+			ppd,
+			reportPtr,
+			uintptr(reportLen),
+		)
+		if status != hidpStatusSuccess {
+			continue
+		}
+
+		lMin := ae.logicalMin
+		lMax := ae.logicalMax
+		if lMax < lMin && ae.bitSize > 0 && ae.bitSize < 32 {
+			lMax = (1 << ae.bitSize) - 1
+			lMin = 0
+		}
+
+		isDpad := ab.Target == "dpup" || ab.Target == "dpdown" ||
+			ab.Target == "dpleft" || ab.Target == "dpright"
+		isTrigger := ab.Target == "lt" || ab.Target == "rt"
+
+		var normalized float64
+		if isDpad {
+			normalized = normalizeHIDAxis(rawVal, lMin, lMax, false)
+		} else {
+			normalized = normalizeHIDAxis(rawVal, lMin, lMax, isTrigger)
+		}
+
+		if ab.HalfPos {
+			if normalized < 0 {
+				normalized = 0
+			}
+		} else if ab.HalfNeg {
+			if normalized > 0 {
+				normalized = 0
+			}
+			normalized = -normalized
+		}
+
+		if ab.Invert {
+			normalized = -normalized
+		}
+
+		if isDpad {
+			if normalized > dpadAxisThreshold {
+				applySDLButtonTarget(state, ab.Target)
+			}
+			continue
+		}
+
+		normalized = applyDeadzone(normalized, deadzone)
+		applyAxisToState(state, ab.Target, normalized)
+	}
+
+	// --- Half-axis from button (N64 C-stick pattern) ---
+	pressedSet := make(map[int]bool, len(pressedButtons))
+	for _, u := range pressedButtons {
+		pressedSet[int(u)-1] = true // 1-based → 0-based
+	}
+	for _, ahb := range sm.AxisHalfButtons {
+		if pressedSet[ahb.ButtonIdx] {
+			applyAxisToState(state, ahb.Target, float64(ahb.Sign))
+		}
+	}
+
+	// --- Buttons ---
+	for _, bb := range sm.Buttons {
+		if pressedSet[bb.ButtonIndex] {
+			applySDLButtonTarget(state, bb.Target)
+		}
+	}
+
+	// Hat dpad is already handled by parseHatSwitch.
+}
+
+// ---------------------------------------------------------------------------
+// parseHIDReportLegacy — usage-code-based fallback path
+// ---------------------------------------------------------------------------
+
+func parseHIDReportLegacy(dev *hidDeviceInfo, state *GamepadState, ppd, reportPtr uintptr, reportLen uint32, pressedButtons []uint16) {
+	for i := range dev.valueCaps {
+		vc := &dev.valueCaps[i]
+		usageMin := vc.UsageMin
+		usageMax := vc.UsageMax
+		if vc.IsRange == 0 || usageMax < usageMin {
+			usageMax = usageMin
+		}
+		for usage := usageMin; usage <= usageMax; usage++ {
+			if vc.UsagePage == usagePageGenericDesktop && usage == hidUsageHat {
+				continue // already handled by parseHatSwitch
+			}
+			target, ok := dev.axisMap[usage]
+			if !ok {
+				continue
+			}
+			var value uint32
+			status, _, _ := procHidPGetUsageValue.Call(
+				hidpInput,
+				uintptr(vc.UsagePage),
+				0,
+				uintptr(usage),
+				uintptr(unsafe.Pointer(&value)),
+				ppd,
+				reportPtr,
+				uintptr(reportLen),
+			)
+			if status != hidpStatusSuccess {
+				continue
+			}
+			lMin := vc.LogicalMin
+			lMax := vc.LogicalMax
+			if lMax < lMin && vc.BitSize > 0 && vc.BitSize < 32 {
+				lMax = (1 << vc.BitSize) - 1
+				lMin = 0
+			}
+			isTrigger := target == "lt" || target == "rt"
+			normalized := normalizeHIDAxis(value, lMin, lMax, isTrigger)
+			normalized = applyDeadzone(normalized, deadzone)
+			applyAxisToState(state, target, normalized)
+		}
+	}
+
+	for _, buttonUsage := range pressedButtons {
 		if buttonUsage == 0 {
 			break
 		}
@@ -618,95 +669,6 @@ func parseHIDReport(dev *hidDeviceInfo, rawData []byte) GamepadState {
 		if target == "" {
 			continue
 		}
-		applyButton(&state, target)
-	}
-
-	return state
-}
-
-// normalizeHIDAxis converts a raw HID axis value to a normalised float64.
-// For axis-style inputs (sticks) it produces [-1.0, 1.0].
-// For trigger-style inputs it produces [0.0, 1.0].
-func normalizeHIDAxis(raw uint32, logMin, logMax int32, isTrigger bool) float64 {
-	if logMax <= logMin {
-		return 0
-	}
-	// Interpret raw as signed if LogicalMin < 0
-	var fRaw float64
-	if logMin < 0 {
-		// Sign-extend based on the actual bit field range.
-		fRaw = float64(int32(raw))
-	} else {
-		fRaw = float64(raw)
-	}
-
-	span := float64(logMax - logMin)
-	if isTrigger {
-		// Map [logMin, logMax] → [0, 1]
-		v := (fRaw - float64(logMin)) / span
-		if v < 0 {
-			v = 0
-		}
-		if v > 1 {
-			v = 1
-		}
-		return v
-	}
-
-	// Map [logMin, logMax] → [-1, 1]
-	mid := float64(logMin) + span/2.0
-	v := (fRaw - mid) / (span / 2.0)
-	if v < -1 {
-		v = -1
-	}
-	if v > 1 {
-		v = 1
-	}
-	return v
-}
-
-// resolveButtonTarget returns the semantic button name for a 1-based HID button usage.
-// Uses the DeviceMapping's HIDButtons table if available, otherwise falls back to
-// defaultButtonOrder.
-func resolveButtonTarget(mapping *DeviceMapping, buttonUsage uint16) string {
-	if mapping != nil && len(mapping.HIDButtons) > 0 {
-		return mapping.HIDButtons[buttonUsage]
-	}
-	idx := int(buttonUsage) - 1
-	if idx >= 0 && idx < len(defaultButtonOrder) {
-		return defaultButtonOrder[idx]
-	}
-	return ""
-}
-
-// applyButton sets the appropriate boolean field on state for the given target name.
-func applyButton(state *GamepadState, target string) {
-	switch target {
-	case "a":
-		state.Buttons.A = true
-	case "b":
-		state.Buttons.B = true
-	case "x":
-		state.Buttons.X = true
-	case "y":
-		state.Buttons.Y = true
-	case "lb":
-		state.Buttons.LB = true
-	case "rb":
-		state.Buttons.RB = true
-	case "back":
-		state.Buttons.Back = true
-	case "start":
-		state.Buttons.Start = true
-	case "guide":
-		state.Buttons.Guide = true
-	case "touchpad":
-		state.Buttons.Touchpad = true
-	case "capture":
-		state.Buttons.Capture = true
-	case "ls":
-		state.Sticks.Left.Pressed = true
-	case "rs":
-		state.Sticks.Right.Pressed = true
+		applyButton(state, target)
 	}
 }

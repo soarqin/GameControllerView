@@ -1,8 +1,77 @@
 package gamepad
 
 import (
+	"bytes"
+	"log"
+	"os"
+	"runtime"
 	"sync"
 )
+
+// globalSDLMappings holds SDL gamecontrollerdb entries loaded at startup.
+// Keyed by (VendorID, ProductID). Set by LoadSDLDB(); nil if not loaded.
+var globalSDLMappings map[deviceKey]*SDLMapping
+
+// sdlPlatformName maps runtime.GOOS values to the platform strings used in
+// gamecontrollerdb.txt entries.
+func sdlPlatformName() string {
+	switch runtime.GOOS {
+	case "windows":
+		return "Windows"
+	case "linux":
+		return "Linux"
+	case "darwin":
+		return "Mac OS X"
+	default:
+		return "Windows"
+	}
+}
+
+// LoadSDLDB initialises the global SDL mapping table.
+//
+// It always loads the embedded gamecontrollerdb.txt as a base. If externalPath
+// is non-empty and the file exists, its entries are merged on top (external
+// entries take priority), allowing users to provide an updated database next to
+// the executable without recompiling.
+//
+// Call before any gamepads connect (ideally before Reader.Run). Safe to call
+// from any goroutine before Run().
+func LoadSDLDB(externalPath string) {
+	platform := sdlPlatformName()
+
+	// Load embedded DB as the base.
+	merged, err := LoadSDLMappingsFromReader(bytes.NewReader(embeddedGameControllerDB), platform)
+	if err != nil {
+		log.Printf("sdldb: failed to parse embedded DB: %v", err)
+		merged = make(map[deviceKey]*SDLMapping)
+	}
+
+	// Overlay with external file if present.
+	if externalPath != "" {
+		if _, statErr := os.Stat(externalPath); statErr == nil {
+			ext, extErr := LoadSDLMappingsFromFile(externalPath, platform)
+			if extErr != nil {
+				log.Printf("sdldb: failed to load %q: %v", externalPath, extErr)
+			} else {
+				for k, v := range ext {
+					merged[k] = v
+				}
+				log.Printf("sdldb: merged external %q (%d entries total)", externalPath, len(merged))
+			}
+		}
+	}
+
+	globalSDLMappings = merged
+}
+
+// lookupSDLMapping returns the SDL mapping for a device's VID/PID, or nil if
+// no mapping was loaded or none matches.
+func lookupSDLMapping(vendorID, productID uint16) *SDLMapping {
+	if globalSDLMappings == nil {
+		return nil
+	}
+	return globalSDLMappings[deviceKey{VendorID: vendorID, ProductID: productID}]
+}
 
 // joystickKey is a unified key for both XInput slots (0-3) and HID device handles.
 // XInput slots use values 0-3 directly.

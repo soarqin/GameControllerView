@@ -71,11 +71,16 @@ InputView/
     │   ├── state.go                    # GamepadState data model (includes PlayerIndex)
     │   ├── mapping.go                  # Device mapping types & GetMapping() function
     │   ├── mapping_table.go            # VID/PID device mapping table (550+ entries)
-    │   ├── reader.go                   # Reader struct: shared fields, Changes()/GetPlayerIndex()/SetActiveByPlayerIndex()
+    │   ├── sdldb.go                    # SDL GameControllerDB parser: LoadSDLMappingsFromFile/Reader
+    │   ├── sdldb_embed.go              # go:embed for bundled gamecontrollerdb.txt
+    │   ├── sdldb_test.go               # Tests for SDL DB parsing
+    │   ├── gamecontrollerdb.txt        # Bundled SDL_GameControllerDB (embedded at compile time)
+    │   ├── reader.go                   # Reader struct: shared fields, Changes()/GetPlayerIndex()/SetActiveByPlayerIndex(), LoadSDLDB(), lookupSDLMapping()
     │   ├── reader_windows.go           # Windows implementation: XInput polling loop (~60Hz) + HID callback handling
     │   ├── reader_other.go             # Non-Windows stub (blocks until ctx cancel)
     │   ├── xinput_windows.go           # XInput API bindings (syscall): GetState, GetStateEx (ordinal 100, Guide button), GetCapabilitiesEx (ordinal 108, VID/PID)
-    │   ├── hidinput_windows.go         # HID Raw Input: hid.dll bindings, device init, report parsing (axes/buttons/hat)
+    │   ├── hidinput_shared.go          # Platform-agnostic HID constants, types, and logic (all platforms)
+    │   ├── hidinput_windows.go         # HID Raw Input: hid.dll bindings, device init, report parsing (axes/buttons/hat); SDL mapping path
     │   └── hidinput_other.go           # Stub for non-Windows platforms
     ├── hub/
     │   ├── hub.go                      # WebSocket hub: client management, targeted broadcast, main loop
@@ -236,6 +241,26 @@ Non-XInput HID gamepads (PS4/PS5/Switch Pro/generic) are captured via the **same
 - `HIDButtons map[uint16]string` — maps 1-based button usage numbers to button target names. If nil, `defaultButtonOrder` is used.
 - PS4/PS5: `playStationHIDAxes` (Z=right_x, Rz=right_y, Rx=lt, Ry=rt) — different from generic default which assigns Z to right trigger.
 - Switch Pro: `switchProHIDAxes` (Z=right_x, Rz=right_y, no analog triggers in HID report).
+
+**SDL GameControllerDB mapping path** (takes priority over legacy HID path when available):
+- `LoadSDLDB(externalPath)` in `reader.go` always loads the **embedded** `gamecontrollerdb.txt` (via `go:embed` in `sdldb_embed.go`) as a base, then overlays an external file at `externalPath` if present. External entries take priority, allowing users to place an updated `gamecontrollerdb.txt` next to the executable without recompiling.
+- `lookupSDLMapping(vid, pid)` in `reader.go` looks up `globalSDLMappings` by VID/PID.
+- `initHIDDevice()` calls `lookupSDLMapping()` and stores `*SDLMapping` in `hidDeviceInfo.sdlMap`.
+- `buildAxisOrder()` enumerates value caps in report order (hat switch excluded), producing an ordered `[]hidAxisEntry` that maps SDL's 0-based axis index to (usagePage, usage).
+- `parseHIDReport()` dispatches to `parseHIDReportSDL()` when `sdlMap != nil`, otherwise falls back to the legacy usage-code path.
+- `parseHIDReportSDL()` handles all SDL binding types:
+  - `leftx:a0` → axis index 0 → full axis → `left_x`
+  - `lefttrigger:+a2` → positive half of axis 2 → `lt`
+  - `righttrigger:-a3` → negative half of axis 3 (flipped) → `rt`
+  - `lefty:a1~` → axis 1 inverted → `left_y`
+  - `dpdown:+a1` → positive half of axis 1 > 0.5 threshold → `Dpad.Down`
+  - `dpdown:h0.4` → hat switch (parsed by `parseHatSwitch()`)
+  - `dpdown:b11` → button 11 → `Dpad.Down`
+  - `+rightx:b9,-rightx:b4` → half-axis from buttons (N64 C-stick pattern) → `right_x`
+- SDL GUID byte layout: `[bus LE16][crc LE16][vid LE16][0x0000][pid LE16][0x0000][ver LE16][sig][data]`. VID/PID are little-endian uint16 at bytes 4-5 and 8-9.
+- `sdlNameToControllerType()` maps SDL controller names (e.g. "DualSense", "PS5") to frontend `controllerType` identifiers.
+- `sdlPlatformName()` maps `runtime.GOOS` to the platform string used in gamecontrollerdb.txt: `"windows"` → `"Windows"`, `"linux"` → `"Linux"`, `"darwin"` → `"Mac OS X"`.
+- File location: place `gamecontrollerdb.txt` next to the executable (from [SDL_GameControllerDB](https://github.com/mdqinc/SDL_GameControllerDB)) to override bundled entries.
 
 ### WebSocket Message Protocol
 

@@ -412,6 +412,8 @@ function analyzeOverlayContent(cfg) {
 function applyGamepadUIVisibility() {
     // Only applies in overlay mode; geometric mode always needs the info bar.
     if (overlayName === null) return;
+    // In simple mode, header/controller-info are always hidden regardless of gamepad presence.
+    if (simpleMode) return;
     const infoBar = document.getElementById('controller-info');
     const statusEl = document.getElementById('status');
     if (!overlayHasGamepad) {

@@ -40,7 +40,7 @@ func main() {
 	gamepad.LoadSDLDB(sdlDBPath)
 
 	// Set up shutdown handling (console Ctrl+C or system tray, depending on build mode).
-	extraShutdownCh := setupShutdown()
+	extraShutdownCh := setupShutdown(appExeDir)
 
 	// Handle OS signals (Ctrl+C on Unix, SIGTERM everywhere)
 	sigCh := make(chan os.Signal, 1)

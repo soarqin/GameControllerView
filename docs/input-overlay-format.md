@@ -8,8 +8,10 @@ InputView supports the [Input Overlay](https://github.com/univrsal/input-overlay
 
 Add `?overlay=<name>` to the URL. The config is looked up in:
 
-1. `overlays/<name>/<name>.json` — external directory next to the executable (takes priority)
+1. `overlays/<dir>/<name>.json` — external directory next to the executable (takes priority)
 2. Embedded presets compiled into the binary (if any)
+
+For a primary config, `<dir>` and `<name>` are the same:
 
 ```
 http://localhost:8080/?overlay=dualsense
@@ -17,22 +19,35 @@ http://localhost:8080/?overlay=xbox-one-controller&p=2&simple=1
 http://localhost:8080/?overlay=keyboard&mouse_sens=300
 ```
 
+### Overlay variants
+
+A single texture atlas (`<dir>.png`) can be shared by multiple JSON configs placed in the same subdirectory. Access a variant using the path `<dir>/<variant>`:
+
+```
+http://localhost:8080/?overlay=dualsense/compact
+```
+
+This loads `overlays/dualsense/compact.json` but uses `overlays/dualsense/dualsense.png` as the texture atlas. The PNG is always loaded from `overlays/<dir>/<dir>.png`, regardless of the variant name.
+
 When the loaded config contains keyboard/mouse element types (`ET_KEYBOARD_KEY`, `ET_MOUSE_BUTTON`, `ET_WHEEL`, or `ET_MOUSE_MOVEMENT`), the frontend automatically subscribes to keyboard and mouse events from the backend. No extra URL parameter is needed.
 
 ### `mouse_sens` parameter
 
 Controls the sensitivity of `ET_MOUSE_MOVEMENT` elements. The raw pixel delta reported by the OS is divided by this value and clamped to `[-1.0, 1.0]`. Default: `500`. Smaller values = more sensitive (larger visual movement per physical pixel moved).
 
-## File Pair
+## File Layout
 
-Each preset consists of two files with the same base name as the directory:
+Each preset directory contains a PNG texture atlas (always named after the directory) and one or more JSON config files:
 
 ```
 overlays/
 └── my-controller/
-    ├── my-controller.json   ← element layout
-    └── my-controller.png    ← texture atlas
+    ├── my-controller.json   ← primary element layout (?overlay=my-controller)
+    ├── compact.json         ← variant layout         (?overlay=my-controller/compact)
+    └── my-controller.png    ← shared texture atlas
 ```
+
+The PNG filename must match the directory name. All JSON configs within the directory share the same texture atlas.
 
 ## JSON Structure
 
@@ -377,8 +392,9 @@ The official CCT is a web-based tool that generates Input Overlay config files v
 1. Create a PNG texture atlas with all button sprites, following the frame layout conventions above.
 2. Write a JSON file referencing each sprite's base `[u, v, w, h]` crop and screen `pos`.
 3. Set `overlay_width` / `overlay_height` to the coordinate space dimensions used for `pos` values.
-4. Place both files in `overlays/<name>/` next to the InputView executable.
+4. Place the PNG and JSON in `overlays/<name>/` next to the InputView executable.
 5. Open `http://localhost:8080/?overlay=<name>` in the browser.
+6. To create a variant layout, add another JSON file in the same directory (e.g. `compact.json`) and access it via `?overlay=<name>/compact`. It will share the same PNG atlas.
 
 ### Coordinate System
 

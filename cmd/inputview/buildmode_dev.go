@@ -13,8 +13,10 @@ import (
 const guiMode = false
 
 // setupShutdown sets up console-mode shutdown handling.
+// exeDir is passed for API symmetry with the release build; it is not used in
+// dev/console mode.
 // Returns a channel that is closed on Ctrl+C / Ctrl+Break (Windows).
-func setupShutdown() <-chan struct{} {
+func setupShutdown(exeDir string) <-chan struct{} {
 	ch := make(chan struct{}, 1)
 	console.SetupConsoleHandler(ch)
 

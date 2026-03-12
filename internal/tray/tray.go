@@ -2,30 +2,54 @@ package tray
 
 import (
 	"log"
+	"net/url"
 	"os/exec"
 	"runtime"
 	"sync"
 	"sync/atomic"
 
 	"fyne.io/systray"
+	"github.com/soar/inputview/internal/overlay"
 )
 
 // ShutdownFunc is called when "Exit" is clicked
 type ShutdownFunc func()
+
+// overlayMenuItem pairs a menu item with the overlay URL path it represents.
+type overlayMenuItem struct {
+	item    *systray.MenuItem
+	urlPath string
+}
 
 // Tray manages the system tray icon and menu
 type Tray struct {
 	shutdownFunc ShutdownFunc
 	once         sync.Once
 	shuttingDown atomic.Bool
-	menuOpen     *systray.MenuItem
-	menuExit     *systray.MenuItem
+	overlays     []overlay.Entry
+	addr         string
+
+	// "Open Browser" parent + sub-items
+	menuOpen        *systray.MenuItem
+	menuOpenDefault *systray.MenuItem
+	openItems       []overlayMenuItem
+
+	// "Copy URL for Streaming" parent + sub-items
+	menuCopy        *systray.MenuItem
+	menuCopyDefault *systray.MenuItem
+	copyItems       []overlayMenuItem
+
+	menuExit *systray.MenuItem
 }
 
-// New creates a new Tray instance
-func New(shutdownFn ShutdownFunc) *Tray {
+// New creates a new Tray instance.
+// overlays is the list of available overlay configs (may be empty).
+// addr is the HTTP listen address, e.g. ":8080".
+func New(shutdownFn ShutdownFunc, overlays []overlay.Entry, addr string) *Tray {
 	return &Tray{
 		shutdownFunc: shutdownFn,
+		overlays:     overlays,
+		addr:         addr,
 	}
 }
 
@@ -44,31 +68,88 @@ func (t *Tray) onReady(iconData []byte) {
 		systray.SetIcon(iconData)
 	}
 	systray.SetTitle("InputView")
-	systray.SetTooltip("InputView - http://localhost:8080")
+	systray.SetTooltip("InputView - http://localhost" + t.addr)
 
-	t.menuOpen = systray.AddMenuItem("Open Browser", "Open web interface")
+	// ── "Open Browser" parent ────────────────────────────────────────────────
+	t.menuOpen = systray.AddMenuItem("Open Browser", "Open web interface in browser")
+	t.menuOpenDefault = t.menuOpen.AddSubMenuItem("Default", "Open default page")
+	for _, ov := range t.overlays {
+		sub := t.menuOpen.AddSubMenuItem(ov.Name, "Open overlay: "+ov.Name)
+		t.openItems = append(t.openItems, overlayMenuItem{item: sub, urlPath: ov.URLPath})
+	}
+
+	// ── "Copy URL for Streaming" parent ──────────────────────────────────────
+	// Sub-items mirror "Open Browser" but the URLs include &simple=1 for use
+	// in streaming software (transparent background, no UI chrome).
+	t.menuCopy = systray.AddMenuItem("Copy URL for Streaming", "Copy URL with simple=1 to clipboard")
+	t.menuCopyDefault = t.menuCopy.AddSubMenuItem("Default", "Copy default streaming URL")
+	for _, ov := range t.overlays {
+		sub := t.menuCopy.AddSubMenuItem(ov.Name, "Copy streaming URL for overlay: "+ov.Name)
+		t.copyItems = append(t.copyItems, overlayMenuItem{item: sub, urlPath: ov.URLPath})
+	}
+
 	t.menuExit = systray.AddMenuItem("Exit", "Quit application")
 
-	// Handle menu clicks in separate goroutines to prevent blocking
-	go t.handleMenuClicks()
+	// Aggregate overlay sub-item clicks into single channels so that the main
+	// select loop does not need a dynamic number of cases.
+	openURLCh := make(chan string, 1)
+	for _, ov := range t.openItems {
+		go func(item *systray.MenuItem, urlPath string) {
+			for range item.ClickedCh {
+				if !t.shuttingDown.Load() {
+					openURLCh <- t.buildURL(urlPath, false)
+				}
+			}
+		}(ov.item, ov.urlPath)
+	}
+
+	copyURLCh := make(chan string, 1)
+	for _, ov := range t.copyItems {
+		go func(item *systray.MenuItem, urlPath string) {
+			for range item.ClickedCh {
+				if !t.shuttingDown.Load() {
+					copyURLCh <- t.buildURL(urlPath, true)
+				}
+			}
+		}(ov.item, ov.urlPath)
+	}
+
+	go t.handleMenuClicks(openURLCh, copyURLCh)
 
 	log.Println("System tray initialized")
 }
 
 // handleMenuClicks processes menu item clicks without blocking
-func (t *Tray) handleMenuClicks() {
+func (t *Tray) handleMenuClicks(openURLCh, copyURLCh <-chan string) {
 	for {
 		select {
-		case <-t.menuOpen.ClickedCh:
+		// ── Open Browser ────────────────────────────────────────────────────
+		case <-t.menuOpenDefault.ClickedCh:
 			if !t.shuttingDown.Load() {
-				// Run openBrowser in a separate goroutine so that this select
-				// loop is never blocked. On Windows, exec.Command(...).Start()
-				// can stall under certain conditions (e.g. antivirus scanning,
-				// disk pressure), which would prevent ClickedCh from being
-				// drained and cause all subsequent menu clicks to be silently
-				// dropped by systray's non-blocking send.
-				go t.openBrowser()
+				// Run in a separate goroutine so that this select loop is never
+				// blocked. On Windows, exec.Command(...).Start() can stall under
+				// certain conditions (antivirus scanning, disk pressure), which
+				// would prevent ClickedCh from being drained and cause all
+				// subsequent menu clicks to be silently dropped by systray's
+				// non-blocking send.
+				go t.openBrowserURL(t.buildURL("", false))
 			}
+		case u := <-openURLCh:
+			if !t.shuttingDown.Load() {
+				go t.openBrowserURL(u)
+			}
+
+		// ── Copy URL for Streaming ───────────────────────────────────────────
+		case <-t.menuCopyDefault.ClickedCh:
+			if !t.shuttingDown.Load() {
+				go copyToClipboard(t.buildURL("", true))
+			}
+		case u := <-copyURLCh:
+			if !t.shuttingDown.Load() {
+				go copyToClipboard(u)
+			}
+
+		// ── Exit ─────────────────────────────────────────────────────────────
 		case <-t.menuExit.ClickedCh:
 			if t.shuttingDown.CompareAndSwap(false, true) {
 				t.once.Do(t.shutdownFunc)
@@ -85,23 +166,43 @@ func (t *Tray) onExit() {
 	log.Println("System tray exiting")
 }
 
-// openBrowser opens the default web browser
-func (t *Tray) openBrowser() {
-	// Prevent multiple browser launches during shutdown
+// buildURL constructs the URL for the given overlay path.
+// If urlPath is empty the base URL is returned.
+// If streaming is true, simple=1 is appended (for use in streaming software).
+func (t *Tray) buildURL(urlPath string, streaming bool) string {
+	base := "http://localhost" + t.addr
+	if urlPath == "" && !streaming {
+		return base
+	}
+
+	params := ""
+	if urlPath != "" {
+		params += "overlay=" + url.QueryEscape(urlPath)
+	}
+	if streaming {
+		if params != "" {
+			params += "&"
+		}
+		params += "simple=1"
+	}
+	return base + "?" + params
+}
+
+// openBrowserURL opens the given URL in the default web browser.
+func (t *Tray) openBrowserURL(targetURL string) {
 	if t.shuttingDown.Load() {
 		return
 	}
 
-	url := "http://localhost:8080"
 	var cmd *exec.Cmd
 
 	switch runtime.GOOS {
 	case "windows":
-		cmd = exec.Command("rundll32", "url.dll,FileProtocolHandler", url)
+		cmd = exec.Command("rundll32", "url.dll,FileProtocolHandler", targetURL)
 	case "darwin":
-		cmd = exec.Command("open", url)
+		cmd = exec.Command("open", targetURL)
 	default:
-		cmd = exec.Command("xdg-open", url)
+		cmd = exec.Command("xdg-open", targetURL)
 	}
 
 	if err := cmd.Start(); err != nil {

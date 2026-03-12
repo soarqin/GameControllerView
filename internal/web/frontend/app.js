@@ -426,16 +426,31 @@ function applyGamepadUIVisibility() {
 }
 
 // Load an Input Overlay config: tries external overlays dir first, then embedded
+//
+// name may be a plain overlay name ("dualsense") or a variant path ("dualsense/compact").
+// For variants the JSON file is overlays/<dir>/<variant>.json but the PNG texture atlas
+// is always overlays/<dir>/<dir>.png (shared across all variants of the same overlay).
 function loadInputOverlayConfig(name) {
     overlayReady = false;
     overlayConfig = null;
     overlayTexture = null;
 
-    // Candidate URL prefixes in priority order:
-    // 1. /overlays/<name>/  — external directory next to executable (served by backend)
-    // 2. /overlays/<name>/  — embedded under frontend/overlays/ (same path, handled by fallback)
-    const baseUrl = `/overlays/${encodeURIComponent(name)}/`;
-    const jsonUrl = `${baseUrl}${encodeURIComponent(name)}.json`;
+    // Split "xxx/yyy" into dirName="xxx", jsonName="yyy".
+    // For a plain name "xxx", both dirName and jsonName are "xxx".
+    const slashIdx = name.indexOf('/');
+    let dirName, jsonName;
+    if (slashIdx >= 0) {
+        dirName = name.substring(0, slashIdx);
+        jsonName = name.substring(slashIdx + 1);
+    } else {
+        dirName = name;
+        jsonName = name;
+    }
+
+    const baseUrl = `/overlays/${encodeURIComponent(dirName)}/`;
+    const jsonUrl = `${baseUrl}${encodeURIComponent(jsonName)}.json`;
+    // PNG texture atlas is always named after the directory (shared by all variants).
+    const pngUrl = `${baseUrl}${encodeURIComponent(dirName)}.png`;
 
     fetch(jsonUrl)
         .then(r => {
@@ -452,8 +467,6 @@ function loadInputOverlayConfig(name) {
                 canvasH = cfg.overlay_height;
                 setupCanvas();
             }
-            // Derive texture filename: same name as JSON but with .png extension
-            const pngUrl = `${baseUrl}${encodeURIComponent(name)}.png`;
             const img = new Image();
             img.onload = () => {
                 overlayTexture = img;

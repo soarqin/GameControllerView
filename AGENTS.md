@@ -35,7 +35,7 @@ No external DLL required. Gamepad input uses XInput (`xinput1_4.dll`, built into
 | `p` | Gamepad number (1-based, default 1) | `?p=2` |
 | `simple` | Simple mode (transparent background, no UI) | `?simple=1` |
 | `alpha` | Gamepad opacity (0.0-1.0) | `?alpha=0.5` |
-| `overlay` | Input Overlay config name (enables texture-atlas renderer) | `?overlay=dualsense` |
+| `overlay` | Input Overlay config name or variant path (enables texture-atlas renderer) | `?overlay=dualsense`, `?overlay=dualsense/compact` |
 | `mouse_sens` | Mouse movement sensitivity divisor (default 500; lower = more sensitive) | `?mouse_sens=300` |
 
 ## Project Structure
@@ -94,8 +94,12 @@ InputView/
     ├── server/
     │   ├── server.go                   # HTTP server, graceful shutdown; mounts external overlays/ dir
     │   └── handler.go                  # WebSocket upgrade, client message handling
+    ├── overlay/
+    │   └── scan.go                     # ScanDir(): enumerate overlays/ directory → []Entry (name + URL path)
     ├── tray/
     │   ├── tray.go                     # Windows system tray integration (atomic shutdown flag, non-blocking menu handling)
+    │   ├── clipboard_windows.go        # Windows clipboard write via Win32 API (user32/kernel32 syscall)
+    │   ├── clipboard_other.go          # Stub for non-Windows platforms
     │   └── icon.go                     # Embedded tray icon
     ├── gpvskin/
     │   ├── skinmodel.go                # Data types: IOElementType, CSSProperties, SkinElement, etc.
@@ -331,7 +335,13 @@ Gamepad body outlines are defined in the `body` section of each config file. The
 The system tray provides menu access when running in GUI mode (double-clicked executable). Key points:
 - **Non-blocking menu handling**: Menu clicks processed in a dedicated goroutine to prevent Windows message loop deadlocks
 - **Atomic shutdown flag**: Prevents duplicate shutdown requests and race conditions
-- **`openBrowser` runs in its own goroutine**: `exec.Command(...).Start()` can stall on Windows under certain conditions (antivirus scanning, disk pressure). If `openBrowser` blocked inside `handleMenuClicks`, the select loop would stop draining `ClickedCh`; since `systray` uses a non-blocking send to that channel, all subsequent clicks would be silently dropped, causing the menu to become permanently unresponsive.
+- **`openBrowserURL` runs in its own goroutine**: `exec.Command(...).Start()` can stall on Windows under certain conditions (antivirus scanning, disk pressure). If `openBrowserURL` blocked inside `handleMenuClicks`, the select loop would stop draining `ClickedCh`; since `systray` uses a non-blocking send to that channel, all subsequent clicks would be silently dropped, causing the menu to become permanently unresponsive.
+- **"Open Browser" sub-menu**: At startup, `overlay.ScanDir()` enumerates the `overlays/` directory. "Open Browser" becomes a parent menu item with sub-items:
+  - **Default** — opens `http://localhost:8080`
+  - One sub-item per overlay entry (primary and variants) — opens `http://localhost:8080?overlay=<name>`
+  - Overlay sub-item clicks are aggregated via a shared `chan string` so the main `select` loop avoids a dynamic number of cases.
+- **"Copy URL for Streaming" sub-menu**: Mirrors "Open Browser" with identical sub-items, but instead of opening a browser the URL is written to the Windows clipboard. All URLs include `?simple=1` (transparent background, no UI chrome) for use in streaming software (OBS Browser Source, etc.). Sub-item URLs also include the `overlay=` parameter. Clipboard writes use `user32.dll`/`kernel32.dll` Win32 API directly (no external dependency).
+- **Overlay variants**: A variant config `overlays/dualsense/compact.json` appears as sub-item "dualsense/compact", opening the page with `?overlay=dualsense/compact`. Its PNG texture atlas is still `overlays/dualsense/dualsense.png`.
 
 ### Input Overlay Rendering
 
@@ -349,6 +359,8 @@ Two rendering engines coexist in `app.js`, selected by the `?overlay=` URL param
 **Simple mode** (`?simple=1`): makes the page background transparent. In Input Overlay mode, type=0 static texture elements (controller body) are always rendered — the controller outline is part of the atlas, not the page background.
 
 **Keyboard/mouse-only overlays**: if the config contains no gamepad element types (2/5/6/7/8), the Player info bar and controller status bar are hidden, `select_player` is not sent, and rendering starts immediately without waiting for a gamepad connection.
+
+**Overlay variants**: A single PNG texture atlas can be shared by multiple JSON configs. Place variant configs in the same subdirectory with different filenames — e.g. `overlays/dualsense/compact.json` — and access them via `?overlay=dualsense/compact`. The PNG is always loaded from `overlays/<dir>/<dir>.png` regardless of the variant name.
 
 Presets are served from `overlays/<name>/` next to the executable (mounted at `/overlays/`). See [docs/input-overlay-format.md](docs/input-overlay-format.md) for full format specification.
 

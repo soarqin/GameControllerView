@@ -769,10 +769,22 @@ function setupCanvas() {
             canvas.style.width  = canvasW + 'px';
             canvas.style.height = canvasH + 'px';
         }
-        const rect = canvas.getBoundingClientRect();
-        canvas.width  = rect.width  * dpr;
-        canvas.height = rect.height * dpr;
-        ctx.scale(dpr, dpr);
+
+        // Read the CSS-constrained width (e.g. max-width: 100% may shrink it), then
+        // derive the height from the same scale factor to preserve aspect ratio.
+        const cssWidth = canvas.getBoundingClientRect().width;
+        const scale = cssWidth / canvasW;
+        const cssHeight = canvasH * scale;
+
+        // Keep the canvas element's height in sync so the layout stays correct.
+        canvas.style.height = cssHeight + 'px';
+
+        canvas.width  = cssWidth  * dpr;
+        canvas.height = cssHeight * dpr;
+
+        // Apply the scale transform so all drawing coordinates remain in the
+        // [0, canvasW] × [0, canvasH] logical space regardless of CSS scaling.
+        ctx.setTransform(dpr * scale, 0, 0, dpr * scale, 0, 0);
     }
 }
 

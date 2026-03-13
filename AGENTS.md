@@ -285,6 +285,7 @@ Non-XInput HID gamepads (PS4/PS5/Switch Pro/generic) are captured via the **same
 **Client → Server:**
 - `select_player`: Select gamepad number to listen to
 - `subscribe_km`: Subscribe to keyboard/mouse event stream (automatically sent when overlay config contains km element types)
+- `set_mouse_sens`: Set mouse movement sensitivity divisor (sent on connect when `?mouse_sens=N` URL param is present)
 
 ```json
 // Client sends
@@ -292,7 +293,12 @@ Non-XInput HID gamepads (PS4/PS5/Switch Pro/generic) are captured via the **same
 
 // Server responds
 {"type": "player_selected", "playerIndex": 2}
+
+// Client sends (when ?mouse_sens=300 URL param is set)
+{"type": "set_mouse_sens", "value": 300}
 ```
+
+`ClientMessage.Value` (float64) carries the numeric payload for `set_mouse_sens`. The backend routes it to `rawinput.Reader.SetMouseSensitivity()`.
 
 ### Device Mapping System
 
@@ -355,6 +361,10 @@ Two rendering engines coexist in `app.js`, selected by the `?overlay=` URL param
 **Supported element types:** texture (0), keyboard_button (1), gamepad_button (2), mouse_button (3), mouse_wheel (4), analog_stick (5), trigger (6), gamepad_id (7), dpad (8), mouse_movement (9)
 
 **Canvas sizing**: In overlay mode, `canvasW`/`canvasH` are set to `overlay_width`/`overlay_height` from the config once loaded. In simple mode (`?simple=1`) the canvas is stretched to fill the viewport while preserving aspect ratio. In geometric/overlay non-simple mode, `setupCanvas()` reads the CSS-constrained width via `getBoundingClientRect()`, derives height from `canvasH * scale` to preserve aspect ratio, and applies `ctx.setTransform(dpr * scale, 0, 0, dpr * scale, 0, 0)` so that drawing coordinates always stay in the `[0, canvasW] × [0, canvasH]` logical space — this prevents content clipping when `max-width: 100%` CSS causes the canvas element to be narrower than the overlay's native dimensions. In geometric mode the canvas stays at the fixed 500×330 logical size.
+
+**Dirty-flag rendering**: `render()` only redraws the canvas when `dirty = true`. The flag is set whenever WebSocket state changes arrive (`applyFullState`, `applyDelta`, `applyKMFull`, `applyKMDelta`) or when assets finish loading. This eliminates unnecessary GPU work at idle (~60 draws/sec → 0 when nothing changes).
+
+**Overlay element sorting**: `cfg.elements` are sorted by `z_level` once when the config JSON is loaded (`loadInputOverlayConfig`), not on every animation frame. The sorted array is mutated in-place on the `overlayConfig` object.
 
 **Simple mode** (`?simple=1`): makes the page background transparent. In Input Overlay mode, type=0 static texture elements (controller body) are always rendered — the controller outline is part of the atlas, not the page background.
 

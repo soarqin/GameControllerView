@@ -17,6 +17,7 @@ type wsHandler struct {
 	hub         *hub.Hub
 	broadcaster *hub.Broadcaster
 	reader      *gamepad.Reader
+	sensSetter  hub.MouseSensitivitySetter
 }
 
 // OnOpen is called when a new WebSocket connection is established.
@@ -47,14 +48,15 @@ func (h *wsHandler) OnMessage(socket *gws.Conn, message *gws.Message) {
 		return
 	}
 	client := v.(*hub.Client)
-	client.HandleMessage(h.reader, h.broadcaster, message.Bytes())
+	client.HandleMessage(h.reader, h.broadcaster, h.sensSetter, message.Bytes())
 }
 
-func handleWebSocket(h *hub.Hub, b *hub.Broadcaster, reader *gamepad.Reader) http.HandlerFunc {
+func handleWebSocket(h *hub.Hub, b *hub.Broadcaster, reader *gamepad.Reader, sensSetter hub.MouseSensitivitySetter) http.HandlerFunc {
 	handler := &wsHandler{
 		hub:         h,
 		broadcaster: b,
 		reader:      reader,
+		sensSetter:  sensSetter,
 	}
 	upgrader := gws.NewUpgrader(handler, &gws.ServerOption{
 		// Allow all origins for local use

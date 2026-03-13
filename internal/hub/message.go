@@ -71,6 +71,7 @@ func NewKMDeltaMessage(seq int64, delta *input.KeyMouseDelta) *WSMessage {
 
 // ClientMessage represents a message sent from the client to the server.
 type ClientMessage struct {
-	Type        string `json:"type"`
-	PlayerIndex int    `json:"playerIndex,omitempty"`
+	Type        string  `json:"type"`
+	PlayerIndex int     `json:"playerIndex,omitempty"`
+	Value       float64 `json:"value,omitempty"` // Generic numeric value (e.g. mouse sensitivity)
 }

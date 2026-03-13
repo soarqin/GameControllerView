@@ -18,6 +18,11 @@ type KMStateProvider interface {
 	SendInitialKMState(c *Client)
 }
 
+// MouseSensitivitySetter can update the mouse movement sensitivity divisor.
+type MouseSensitivitySetter interface {
+	SetMouseSensitivity(float32)
+}
+
 // Client represents a connected WebSocket client.
 type Client struct {
 	hub           *Hub
@@ -48,7 +53,7 @@ func (c *Client) Send(data []byte) {
 
 // HandleMessage parses and dispatches a client command message.
 // Called from the gws OnMessage event handler.
-func (c *Client) HandleMessage(reader PlayerSwitcher, kmProvider KMStateProvider, message []byte) {
+func (c *Client) HandleMessage(reader PlayerSwitcher, kmProvider KMStateProvider, sensSetter MouseSensitivitySetter, message []byte) {
 	var clientMsg ClientMessage
 	if err := json.Unmarshal(message, &clientMsg); err != nil {
 		log.Printf("Error parsing client message: %v", err)
@@ -71,6 +76,11 @@ func (c *Client) HandleMessage(reader PlayerSwitcher, kmProvider KMStateProvider
 		log.Printf("Client subscribed to keyboard/mouse events")
 		if kmProvider != nil {
 			kmProvider.SendInitialKMState(c)
+		}
+	case "set_mouse_sens":
+		if sensSetter != nil && clientMsg.Value > 0 {
+			sensSetter.SetMouseSensitivity(float32(clientMsg.Value))
+			log.Printf("Mouse sensitivity set to %.1f", clientMsg.Value)
 		}
 	}
 }

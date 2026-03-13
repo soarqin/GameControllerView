@@ -19,6 +19,7 @@ type Server struct {
 	hub         *hub.Hub
 	broadcaster *hub.Broadcaster
 	reader      *gamepad.Reader
+	sensSetter  hub.MouseSensitivitySetter
 	frontendFS  fs.FS
 	gzipCache   map[string][]byte
 	exeDir      string
@@ -26,11 +27,12 @@ type Server struct {
 	httpServer  *http.Server
 }
 
-func New(h *hub.Hub, b *hub.Broadcaster, r *gamepad.Reader, frontendFS fs.FS, gzipCache map[string][]byte, exeDir string, addr string) *Server {
+func New(h *hub.Hub, b *hub.Broadcaster, r *gamepad.Reader, sensSetter hub.MouseSensitivitySetter, frontendFS fs.FS, gzipCache map[string][]byte, exeDir string, addr string) *Server {
 	return &Server{
 		hub:         h,
 		broadcaster: b,
 		reader:      r,
+		sensSetter:  sensSetter,
 		frontendFS:  frontendFS,
 		gzipCache:   gzipCache,
 		exeDir:      exeDir,
@@ -42,7 +44,7 @@ func (s *Server) ListenAndServe() error {
 	mux := http.NewServeMux()
 
 	// WebSocket endpoint
-	mux.HandleFunc("/ws", handleWebSocket(s.hub, s.broadcaster, s.reader))
+	mux.HandleFunc("/ws", handleWebSocket(s.hub, s.broadcaster, s.reader, s.sensSetter))
 
 	// External overlays directory (next to the executable): /overlays/
 	// This takes priority over the embedded overlays so users can override or add configs.

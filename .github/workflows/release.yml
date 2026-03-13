@@ -21,6 +21,39 @@ jobs:
         with:
           go-version-file: go.mod
 
+      - name: Update gamecontrollerdb.txt
+        shell: pwsh
+        run: |
+          $dbPath   = "internal\gamepad\gamecontrollerdb.txt"
+          $apiUrl   = "https://api.github.com/repos/mdqinc/SDL_GameControllerDB/contents/gamecontrollerdb.txt"
+          $rawUrl   = "https://raw.githubusercontent.com/mdqinc/SDL_GameControllerDB/master/gamecontrollerdb.txt"
+
+          try {
+            $response = Invoke-RestMethod -Uri $apiUrl `
+              -Headers @{ "User-Agent" = "InputView-build"; "Accept" = "application/vnd.github.v3+json" } `
+              -TimeoutSec 15 -ErrorAction Stop
+
+            $remoteSha = $response.sha
+
+            $localBytes = [System.IO.File]::ReadAllBytes((Resolve-Path $dbPath))
+            $header     = [System.Text.Encoding]::ASCII.GetBytes("blob $($localBytes.Length)`0")
+            $sha1       = [System.Security.Cryptography.SHA1]::Create()
+            $localSha   = ($sha1.ComputeHash([byte[]]($header + $localBytes)) |
+                          ForEach-Object { $_.ToString("x2") }) -join ""
+
+            if ($localSha -eq $remoteSha) {
+              Write-Host "gamecontrollerdb.txt is up to date (sha: $localSha)."
+            } else {
+              Write-Host "Updating gamecontrollerdb.txt (local: $localSha  remote: $remoteSha)..."
+              Invoke-WebRequest -Uri $rawUrl -OutFile $dbPath `
+                -Headers @{ "User-Agent" = "InputView-build" } `
+                -TimeoutSec 60 -ErrorAction Stop
+              Write-Host "gamecontrollerdb.txt updated ($($response.size) bytes)."
+            }
+          } catch {
+            Write-Warning "Could not update gamecontrollerdb.txt: $_"
+          }
+
       - name: Build InputView.exe
         run: go build -tags release -ldflags "-s -w -H=windowsgui" -o InputView.exe ./cmd/inputview
 

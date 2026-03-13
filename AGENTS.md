@@ -92,7 +92,7 @@ InputView/
     │   ├── broadcast.go                # State change → targeted JSON broadcast
     │   └── message.go                  # WSMessage type definitions
     ├── server/
-    │   ├── server.go                   # HTTP server, graceful shutdown; mounts external overlays/ dir
+    │   ├── server.go                   # HTTP server, graceful shutdown; mounts external overlays/ dir; gzip-aware static file handler
     │   └── handler.go                  # WebSocket upgrade, client message handling
     ├── overlay/
     │   └── scan.go                     # ScanDir(): enumerate overlays/ directory → []Entry (name + URL path)
@@ -110,7 +110,7 @@ InputView/
     │   ├── atlas.go                    # Sprite cropping + IO-convention atlas packing
     │   └── generate.go                 # Input Overlay JSON generation + high-level Convert() pipeline
     └── web/
-        ├── embed.go                    # go:embed embeds frontend/ static files, exports FrontendFS()
+        ├── embed.go                    # go:embed embeds frontend/ static files; minifies JS/CSS/HTML/JSON at startup and pre-compresses with gzip; exports FrontendFS() and GzipCache()
         └── frontend/                   # Frontend static files
             ├── index.html
             ├── styles.css
@@ -427,3 +427,5 @@ All drawing logic is in `internal/web/frontend/app.js` in `drawController()` and
 | `github.com/klauspost/compress` | Transitive dependency (via gws, permessage-deflate) |
 | `fyne.io/systray` | Windows system tray integration |
 | `github.com/godbus/dbus/v5` | Transitive (via systray, Linux only) |
+| `github.com/tdewolff/minify/v2` | JS/CSS/HTML/JSON minifier — runs at startup to pre-process embedded frontend assets |
+| `github.com/tdewolff/parse/v2` | Transitive dependency (via tdewolff/minify) |

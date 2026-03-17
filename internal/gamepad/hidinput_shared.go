@@ -208,17 +208,11 @@ func applyButton(state *GamepadState, target string) {
 func sdlNameToControllerType(sdlName string) string {
 	lower := strings.ToLower(sdlName)
 	switch {
-	case strings.Contains(lower, "dualsense") || strings.Contains(lower, "ps5"):
-		return "PlayStation5"
-	case strings.Contains(lower, "dualshock 4") || strings.Contains(lower, "ps4"):
+	case strings.Contains(lower, "dualsense") || strings.Contains(lower, "ps5") ||
+		strings.Contains(lower, "dualshock") || strings.Contains(lower, "ps4") ||
+		strings.Contains(lower, "ps3") || strings.Contains(lower, "ps2") ||
+		strings.Contains(lower, "ps1"):
 		return "PlayStation"
-	case strings.Contains(lower, "dualshock") || strings.Contains(lower, "ps3") ||
-		strings.Contains(lower, "ps2") || strings.Contains(lower, "ps1"):
-		return "PlayStation"
-	case strings.Contains(lower, "switch pro") || strings.Contains(lower, "pro controller"):
-		return "Switch Pro"
-	case strings.Contains(lower, "joy-con"):
-		return "Switch Pro"
 	default:
 		return "Xbox"
 	}

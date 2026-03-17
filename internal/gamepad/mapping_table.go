@@ -74,36 +74,6 @@ var playStation5HIDButtons = map[uint16]string{
 	14: "touchpad",
 }
 
-// HID axis mapping for Nintendo Switch Pro Controller.
-// Switch Pro HID: X=left_x, Y=left_y, Z=right_x, Rz=right_y.
-// Triggers are digital-only buttons (no analog HID axis).
-var switchProHIDAxes = map[uint16]string{
-	hidUsageX:  "left_x",
-	hidUsageY:  "left_y",
-	hidUsageZ:  "right_x",
-	hidUsageRz: "right_y",
-}
-
-// HID button mapping for Nintendo Switch Pro Controller.
-// Switch Pro HID button order: B(1) A(2) Y(3) X(4) L(5) R(6) ZL(7) ZR(8)
-// Minus(9) Plus(10) LS(11) RS(12) Home(13) Capture(14)
-var switchProHIDButtons = map[uint16]string{
-	1:  "a",       // B → A (confirm on Switch)
-	2:  "b",       // A → B (back on Switch)
-	3:  "x",       // Y → X (left face)
-	4:  "y",       // X → Y (top face)
-	5:  "lb",      // L
-	6:  "rb",      // R
-	7:  "lt",      // ZL (digital trigger)
-	8:  "rt",      // ZR (digital trigger)
-	9:  "back",    // Minus
-	10: "start",   // Plus
-	11: "ls",      // Left stick click
-	12: "rs",      // Right stick click
-	13: "guide",   // Home
-	14: "capture", // Capture
-}
-
 // newPlayStationMapping creates a PlayStation mapping with optional extra buttons
 // and HID-specific axis/button maps. PS5 adds button 11 (touchpad).
 func newPlayStationMapping(name string, hidButtons map[uint16]string, extraButtons ...ButtonMapping) *DeviceMapping {
@@ -151,36 +121,7 @@ var xboxMapping = &DeviceMapping{
 
 var playstationMapping = newPlayStationMapping("playstation", playStationHIDButtons)
 
-var playstation5Mapping = newPlayStationMapping("playstation5", playStation5HIDButtons, ButtonMapping{Index: 11, Target: "touchpad"})
-
-var switchProMapping = &DeviceMapping{
-	Name: "switch_pro",
-	Axes: []AxisMapping{
-		{Index: 0, Target: "left_x"},
-		{Index: 1, Target: "left_y", Invert: true},
-		{Index: 2, Target: "right_x"},
-		{Index: 3, Target: "right_y", Invert: true},
-		{Index: 4, Target: "lt", IsTrigger: true, RawMin: -32768, RawMax: 32767},
-		{Index: 5, Target: "rt", IsTrigger: true, RawMin: -32768, RawMax: 32767},
-	},
-	Buttons: []ButtonMapping{
-		{Index: 0, Target: "a"},
-		{Index: 1, Target: "b"},
-		{Index: 2, Target: "x"},
-		{Index: 3, Target: "y"},
-		{Index: 4, Target: "back"},
-		{Index: 5, Target: "guide"},
-		{Index: 6, Target: "start"},
-		{Index: 7, Target: "ls"},
-		{Index: 8, Target: "rs"},
-		{Index: 9, Target: "lb"},
-		{Index: 10, Target: "rb"},
-		{Index: 11, Target: "capture"},
-	},
-	HasHat:     true,
-	HIDAxes:    switchProHIDAxes,
-	HIDButtons: switchProHIDButtons,
-}
+var playstation5Mapping = newPlayStationMapping("playstation", playStation5HIDButtons, ButtonMapping{Index: 11, Target: "touchpad"})
 
 // Known vendor/product IDs.
 var knownDevices = map[deviceKey]*DeviceMapping{
@@ -673,9 +614,9 @@ var knownDevices = map[deviceKey]*DeviceMapping{
 	{0x358a, 0x0104}: playstation5Mapping,
 
 	// Nintendo Switch Pro Controller
-	{0x057e, 0x2009}: switchProMapping,
-	{0x057e, 0x2069}: switchProMapping,
-	{0x0f0d, 0x00f6}: switchProMapping,
-	{0x0e6f, 0x0186}: switchProMapping,
-	{0x0e6f, 0x018c}: switchProMapping,
+	{0x057e, 0x2009}: xboxMapping,
+	{0x057e, 0x2069}: xboxMapping,
+	{0x0f0d, 0x00f6}: xboxMapping,
+	{0x0e6f, 0x0186}: xboxMapping,
+	{0x0e6f, 0x018c}: xboxMapping,
 }

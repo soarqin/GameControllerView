@@ -295,8 +295,7 @@ function loadConfigIfNeeded() {
     const configMap = {
         'xbox': 'xbox',
         'playstation': 'playstation',
-        'playstation5': 'playstation5',
-        'switch_pro': 'switch_pro',
+        'playstation5': 'playstation',
     };
     const configName = configMap[type] || 'xbox';
 

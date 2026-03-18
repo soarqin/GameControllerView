@@ -5,6 +5,16 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.2.1] - 2026-03-19
+
+### Fixed
+
+- System tray icon becomes completely unresponsive (right-click menu stops appearing) after the program runs for some time. Root cause: `systray.Run()` was called from a spawned goroutine without `runtime.LockOSThread()`, allowing Go's async preemption to migrate the goroutine between OS threads and break the Windows message loop. Fixed by locking the goroutine to its OS thread before entering the systray event loop.
+
+### Changed
+
+- Consolidated PS4, PS5, and Switch Pro controller types into a single PlayStation layout: updated `playstation.json` to PS5 body shape with touchpad, removed separate `playstation5.json` and `switch_pro.json` configs.
+
 ## [0.2.0] - 2026-03-13
 
 ### Added

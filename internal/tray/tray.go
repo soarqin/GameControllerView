@@ -55,6 +55,7 @@ func New(shutdownFn ShutdownFunc, overlays []overlay.Entry, addr string) *Tray {
 
 // Run initializes and runs the system tray (blocks until Quit())
 func (t *Tray) Run(iconData []byte) {
+	runtime.LockOSThread()
 	systray.Run(func() {
 		t.onReady(iconData)
 	}, func() {
@@ -97,7 +98,10 @@ func (t *Tray) onReady(iconData []byte) {
 		go func(item *systray.MenuItem, urlPath string) {
 			for range item.ClickedCh {
 				if !t.shuttingDown.Load() {
-					openURLCh <- t.buildURL(urlPath, false)
+					select {
+					case openURLCh <- t.buildURL(urlPath, false):
+					default:
+					}
 				}
 			}
 		}(ov.item, ov.urlPath)
@@ -108,7 +112,10 @@ func (t *Tray) onReady(iconData []byte) {
 		go func(item *systray.MenuItem, urlPath string) {
 			for range item.ClickedCh {
 				if !t.shuttingDown.Load() {
-					copyURLCh <- t.buildURL(urlPath, true)
+					select {
+					case copyURLCh <- t.buildURL(urlPath, true):
+					default:
+					}
 				}
 			}
 		}(ov.item, ov.urlPath)
@@ -207,5 +214,7 @@ func (t *Tray) openBrowserURL(targetURL string) {
 
 	if err := cmd.Start(); err != nil {
 		log.Printf("Failed to open browser: %v", err)
+	} else {
+		go cmd.Wait()
 	}
 }

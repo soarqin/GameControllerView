@@ -339,6 +339,7 @@ Gamepad body outlines are defined in the `body` section of each config file. The
 ### System Tray (Windows GUI Mode)
 
 The system tray provides menu access when running in GUI mode (double-clicked executable). Key points:
+- **Thread locking**: `Tray.Run()` calls `runtime.LockOSThread()` before `systray.Run()` because the systray library's `init()` locks the main goroutine (assuming `Run()` is called from `main()`), but InputView calls it from a spawned goroutine. Without explicit locking, Go's async preemption can migrate the goroutine between OS threads, breaking the Windows message loop (which is thread-bound). This caused the tray icon to become completely unresponsive after some time.
 - **Non-blocking menu handling**: Menu clicks processed in a dedicated goroutine to prevent Windows message loop deadlocks
 - **Atomic shutdown flag**: Prevents duplicate shutdown requests and race conditions
 - **`openBrowserURL` runs in its own goroutine**: `exec.Command(...).Start()` can stall on Windows under certain conditions (antivirus scanning, disk pressure). If `openBrowserURL` blocked inside `handleMenuClicks`, the select loop would stop draining `ClickedCh`; since `systray` uses a non-blocking send to that channel, all subsequent clicks would be silently dropped, causing the menu to become permanently unresponsive.

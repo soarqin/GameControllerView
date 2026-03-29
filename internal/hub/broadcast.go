@@ -3,6 +3,7 @@ package hub
 import (
 	"encoding/json"
 	"log"
+	"sync"
 	"time"
 
 	"github.com/soar/inputview/internal/gamepad"
@@ -19,6 +20,7 @@ type Broadcaster struct {
 	hub         *Hub
 	changes     <-chan gamepad.GamepadState
 	kmChanges   <-chan input.KeyMouseState
+	mu          sync.Mutex // protects lastState, lastKMState, seq, kmSeq
 	lastState   gamepad.GamepadState
 	lastKMState input.KeyMouseState
 	seq         int64
@@ -51,22 +53,28 @@ func (b *Broadcaster) Run() {
 				return
 			}
 
+			b.mu.Lock()
 			delta := gamepad.ComputeDelta(b.lastState, state)
 			b.lastState = state
 
 			if delta.IsEmpty() {
+				b.mu.Unlock()
 				continue
 			}
 
 			b.seq++
+			seq := b.seq
+			playerIndex := state.PlayerIndex
+			b.mu.Unlock()
+
 			deltaCount++
 
 			// Send full sync periodically
 			if deltaCount >= deltaCountSync {
-				b.sendFull(state)
+				b.broadcastFull(seq, state, playerIndex)
 				deltaCount = 0
 			} else {
-				b.sendDelta(delta)
+				b.broadcastDelta(seq, delta, playerIndex)
 			}
 
 		case kmState, ok := <-b.kmChanges:
@@ -78,9 +86,15 @@ func (b *Broadcaster) Run() {
 			b.handleKMState(kmState)
 
 		case <-ticker.C:
+			b.mu.Lock()
 			if b.lastState.Connected {
 				b.seq++
-				b.sendFull(b.lastState)
+				seq := b.seq
+				stateCopy := b.lastState
+				b.mu.Unlock()
+				b.broadcastFull(seq, stateCopy, stateCopy.PlayerIndex)
+			} else {
+				b.mu.Unlock()
 			}
 		}
 	}
@@ -88,21 +102,31 @@ func (b *Broadcaster) Run() {
 
 // handleKMState computes the delta from the previous keyboard/mouse state and broadcasts it.
 func (b *Broadcaster) handleKMState(curr input.KeyMouseState) {
+	b.mu.Lock()
 	delta := input.ComputeKeyMouseDelta(b.lastKMState, curr)
 	b.lastKMState = curr
 
 	if delta.IsEmpty() {
+		b.mu.Unlock()
 		return
 	}
 
 	b.kmSeq++
-	b.sendKMDelta(delta)
+	seq := b.kmSeq
+	b.mu.Unlock()
+	b.broadcastKMDelta(seq, delta)
 }
 
 // SendInitialState sends the current full state to a newly connected client.
+// Safe to call from any goroutine (e.g. gws OnOpen handler).
 func (b *Broadcaster) SendInitialState(c *Client) {
+	b.mu.Lock()
 	b.seq++
-	msg := NewFullMessage(b.seq, &b.lastState)
+	stateCopy := b.lastState
+	seq := b.seq
+	b.mu.Unlock()
+
+	msg := NewFullMessage(seq, &stateCopy)
 	data, err := json.Marshal(msg)
 	if err != nil {
 		log.Printf("Error marshaling initial state: %v", err)
@@ -112,9 +136,24 @@ func (b *Broadcaster) SendInitialState(c *Client) {
 }
 
 // SendInitialKMState sends the current full keyboard/mouse state to a newly subscribed client.
+// Safe to call from any goroutine (e.g. gws OnMessage handler).
 func (b *Broadcaster) SendInitialKMState(c *Client) {
+	b.mu.Lock()
 	b.kmSeq++
-	msg := NewKMFullMessage(b.kmSeq, &b.lastKMState)
+	// Deep-copy map fields to avoid racing with Run() goroutine.
+	kmCopy := b.lastKMState
+	kmCopy.Keys = make(map[uint16]bool, len(b.lastKMState.Keys))
+	for k, v := range b.lastKMState.Keys {
+		kmCopy.Keys[k] = v
+	}
+	kmCopy.MouseButtons = make(map[uint16]bool, len(b.lastKMState.MouseButtons))
+	for k, v := range b.lastKMState.MouseButtons {
+		kmCopy.MouseButtons[k] = v
+	}
+	seq := b.kmSeq
+	b.mu.Unlock()
+
+	msg := NewKMFullMessage(seq, &kmCopy)
 	data, err := json.Marshal(msg)
 	if err != nil {
 		log.Printf("Error marshaling initial km state: %v", err)
@@ -123,29 +162,32 @@ func (b *Broadcaster) SendInitialKMState(c *Client) {
 	c.Send(data)
 }
 
-func (b *Broadcaster) sendFull(state gamepad.GamepadState) {
-	msg := NewFullMessage(b.seq, &state)
+// broadcastFull marshals and broadcasts a full state message.
+// All state is passed by value — no lock needed.
+func (b *Broadcaster) broadcastFull(seq int64, state gamepad.GamepadState, playerIndex int) {
+	msg := NewFullMessage(seq, &state)
 	data, err := json.Marshal(msg)
 	if err != nil {
 		log.Printf("Error marshaling full message: %v", err)
 		return
 	}
-	b.hub.BroadcastToPlayer(data, state.PlayerIndex)
+	b.hub.BroadcastToPlayer(data, playerIndex)
 }
 
-func (b *Broadcaster) sendDelta(delta *gamepad.DeltaChanges) {
-	msg := NewDeltaMessage(b.seq, delta)
+// broadcastDelta marshals and broadcasts a delta message.
+func (b *Broadcaster) broadcastDelta(seq int64, delta *gamepad.DeltaChanges, playerIndex int) {
+	msg := NewDeltaMessage(seq, delta)
 	data, err := json.Marshal(msg)
 	if err != nil {
 		log.Printf("Error marshaling delta message: %v", err)
 		return
 	}
-	// For delta, we need to get player index from lastState
-	b.hub.BroadcastToPlayer(data, b.lastState.PlayerIndex)
+	b.hub.BroadcastToPlayer(data, playerIndex)
 }
 
-func (b *Broadcaster) sendKMDelta(delta *input.KeyMouseDelta) {
-	msg := NewKMDeltaMessage(b.kmSeq, delta)
+// broadcastKMDelta marshals and broadcasts a keyboard/mouse delta message.
+func (b *Broadcaster) broadcastKMDelta(seq int64, delta *input.KeyMouseDelta) {
+	msg := NewKMDeltaMessage(seq, delta)
 	data, err := json.Marshal(msg)
 	if err != nil {
 		log.Printf("Error marshaling km delta message: %v", err)

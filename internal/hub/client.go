@@ -27,22 +27,24 @@ type MouseSensitivitySetter interface {
 type Client struct {
 	hub           *Hub
 	conn          *gws.Conn
-	playerIndex   int          // 1-based player index this client is listening to
+	playerIndex   atomic.Int32 // 1-based player index this client is listening to
 	wantsKeyMouse atomic.Int32 // 1 when client has subscribed to keyboard/mouse events; 0 otherwise
 }
 
 // NewClient creates a new Client attached to the hub.
 func NewClient(hub *Hub, conn *gws.Conn) *Client {
-	return &Client{
-		hub:         hub,
-		conn:        conn,
-		playerIndex: 1, // Default to player 1
+	c := &Client{
+		hub:  hub,
+		conn: conn,
 	}
+	c.playerIndex.Store(1) // Default to player 1
+	return c
 }
 
 // SetPlayerIndex sets the player index for this client.
+// Safe to call from any goroutine.
 func (c *Client) SetPlayerIndex(index int) {
-	c.playerIndex = index
+	c.playerIndex.Store(int32(index))
 }
 
 // Send queues a text message for asynchronous delivery to the client.
@@ -65,7 +67,11 @@ func (c *Client) HandleMessage(reader PlayerSwitcher, kmProvider KMStateProvider
 		if reader.SetActiveByPlayerIndex(clientMsg.PlayerIndex) {
 			c.SetPlayerIndex(clientMsg.PlayerIndex)
 			msg := NewPlayerSelectedMessage(clientMsg.PlayerIndex)
-			data, _ := json.Marshal(msg)
+			data, err := json.Marshal(msg)
+			if err != nil {
+				log.Printf("Error marshaling player_selected message: %v", err)
+				return
+			}
 			c.Send(data)
 			log.Printf("Client switched to player %d", clientMsg.PlayerIndex)
 		} else {

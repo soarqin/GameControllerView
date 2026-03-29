@@ -338,22 +338,24 @@ func (r *Reader) registerJoystick(key joystickKey, info *joystickInfo) {
 	}
 
 	playerIndex := r.getPlayerIndexLocked(key)
-	r.mu.Unlock()
 
-	log.Printf("Gamepad connected: Player %d - %s (%s) mapping=%s",
-		playerIndex, info.name, info.sourceType, info.mapping.Name)
-
-	// Set as active if no active controller yet.
+	// Set as active if no active controller yet (check under same lock).
+	becameActive := false
 	if !r.hasActive {
-		r.mu.Lock()
 		r.activeKey = key
 		r.hasActive = true
 		r.state.Connected = true
 		r.state.Name = info.name
 		r.state.ControllerType = info.mapping.Name
 		r.state.PlayerIndex = playerIndex
-		r.mu.Unlock()
+		becameActive = true
+	}
+	r.mu.Unlock()
 
+	log.Printf("Gamepad connected: Player %d - %s (%s) mapping=%s",
+		playerIndex, info.name, info.sourceType, info.mapping.Name)
+
+	if becameActive {
 		log.Printf("Active controller set to player %d: %s", playerIndex, info.name)
 		r.emitState()
 	}

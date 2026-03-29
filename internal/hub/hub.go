@@ -36,8 +36,9 @@ func (h *Hub) BroadcastToPlayer(msg []byte, playerIndex int) {
 	h.mu.RLock()
 	defer h.mu.RUnlock()
 
+	pi := int32(playerIndex)
 	for client := range h.clients {
-		if client.playerIndex == playerIndex {
+		if client.playerIndex.Load() == pi {
 			client.Send(msg)
 		}
 	}

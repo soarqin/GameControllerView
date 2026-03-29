@@ -323,25 +323,35 @@ func initHIDDevice(hDevice uintptr) *hidDeviceInfo {
 	if dev.caps.NumberInputValueCaps > 0 {
 		dev.valueCaps = make([]hidpValueCaps, dev.caps.NumberInputValueCaps)
 		vcLen := uint16(dev.caps.NumberInputValueCaps)
-		procHidPGetValueCaps.Call(
+		status, _, _ = procHidPGetValueCaps.Call(
 			hidpInput,
 			uintptr(unsafe.Pointer(&dev.valueCaps[0])),
 			uintptr(unsafe.Pointer(&vcLen)),
 			ppd,
 		)
-		dev.valueCaps = dev.valueCaps[:vcLen]
+		if status != hidpStatusSuccess {
+			log.Printf("hidinput: HidP_GetValueCaps failed (0x%08x) for %s", status, dev.name)
+			dev.valueCaps = nil
+		} else {
+			dev.valueCaps = dev.valueCaps[:vcLen]
+		}
 	}
 
 	if dev.caps.NumberInputButtonCaps > 0 {
 		dev.buttonCaps = make([]hidpButtonCaps, dev.caps.NumberInputButtonCaps)
 		bcLen := uint16(dev.caps.NumberInputButtonCaps)
-		procHidPGetButtonCaps.Call(
+		status, _, _ = procHidPGetButtonCaps.Call(
 			hidpInput,
 			uintptr(unsafe.Pointer(&dev.buttonCaps[0])),
 			uintptr(unsafe.Pointer(&bcLen)),
 			ppd,
 		)
-		dev.buttonCaps = dev.buttonCaps[:bcLen]
+		if status != hidpStatusSuccess {
+			log.Printf("hidinput: HidP_GetButtonCaps failed (0x%08x) for %s", status, dev.name)
+			dev.buttonCaps = nil
+		} else {
+			dev.buttonCaps = dev.buttonCaps[:bcLen]
+		}
 	}
 
 	for _, bc := range dev.buttonCaps {

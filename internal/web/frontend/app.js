@@ -425,8 +425,13 @@ function loadInputOverlayConfig(name) {
             };
             img.onerror = () => {
                 console.error(`Failed to load texture: ${pngUrl}`);
-                overlayReady = true;
-                dirty = true;
+                // Do NOT set overlayReady — render loop will stay idle.
+                // Show error in the status bar so the user knows what went wrong.
+                const statusEl = document.getElementById('status');
+                if (statusEl) {
+                    statusEl.textContent = `Error: failed to load texture ${dirName}.png`;
+                    statusEl.style.display = '';
+                }
             };
             img.src = pngUrl;
         })

@@ -19,6 +19,7 @@ var (
 	procGlobalAlloc      = modKernel32.NewProc("GlobalAlloc")
 	procGlobalLock       = modKernel32.NewProc("GlobalLock")
 	procGlobalUnlock     = modKernel32.NewProc("GlobalUnlock")
+	procGlobalFree       = modKernel32.NewProc("GlobalFree")
 )
 
 const (
@@ -43,13 +44,23 @@ func copyToClipboard(text string) {
 		return
 	}
 
+	// Track whether SetClipboardData took ownership of hMem.
+	// If it did, we must NOT free the handle ourselves.
+	ownershipTransferred := false
+	defer func() {
+		if !ownershipTransferred {
+			procGlobalFree.Call(hMem)
+		}
+	}()
+
 	// Lock and write UTF-16 data.
 	ptr, _, err := procGlobalLock.Call(hMem)
 	if ptr == 0 {
 		log.Printf("Clipboard: GlobalLock failed: %v", err)
 		return
 	}
-	dst := unsafe.Slice((*uint16)(unsafe.Pointer(ptr)), len(utf16))
+	// nolint: gosec — ptr is a system-allocated handle from GlobalLock, not GC-managed memory.
+	dst := unsafe.Slice((*uint16)(unsafe.Pointer(ptr)), len(utf16)) //nolint:govet
 	copy(dst, utf16)
 	procGlobalUnlock.Call(hMem)
 
@@ -59,10 +70,14 @@ func copyToClipboard(text string) {
 		log.Printf("Clipboard: OpenClipboard failed: %v", err)
 		return
 	}
+	defer procCloseClipboard.Call()
+
 	procEmptyClipboard.Call()
 	ret, _, err = procSetClipboardData.Call(cfUnicodeText, hMem)
 	if ret == 0 {
 		log.Printf("Clipboard: SetClipboardData failed: %v", err)
+		return
 	}
-	procCloseClipboard.Call()
+	// SetClipboardData succeeded — the system now owns hMem.
+	ownershipTransferred = true
 }

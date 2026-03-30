@@ -1,7 +1,7 @@
 package tray
 
 import (
-	"log"
+	"log/slog"
 	"net/url"
 	"os/exec"
 	"runtime"
@@ -123,7 +123,7 @@ func (t *Tray) onReady(iconData []byte) {
 
 	go t.handleMenuClicks(openURLCh, copyURLCh)
 
-	log.Println("System tray initialized")
+	slog.Info("system tray initialized")
 }
 
 // handleMenuClicks processes menu item clicks without blocking
@@ -170,7 +170,7 @@ func (t *Tray) handleMenuClicks(openURLCh, copyURLCh <-chan string) {
 // onExit is called when the tray is exiting
 func (t *Tray) onExit() {
 	t.shuttingDown.Store(true)
-	log.Println("System tray exiting")
+	slog.Info("system tray exiting")
 }
 
 // buildURL constructs the URL for the given overlay path.
@@ -213,7 +213,7 @@ func (t *Tray) openBrowserURL(targetURL string) {
 	}
 
 	if err := cmd.Start(); err != nil {
-		log.Printf("Failed to open browser: %v", err)
+		slog.Warn("failed to open browser", "error", err)
 	} else {
 		go cmd.Wait()
 	}

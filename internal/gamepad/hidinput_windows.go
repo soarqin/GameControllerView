@@ -4,7 +4,7 @@ package gamepad
 
 import (
 	"fmt"
-	"log"
+	"log/slog"
 	"strings"
 	"syscall"
 	"unicode/utf16"
@@ -276,7 +276,7 @@ func initHIDDevice(hDevice uintptr) *hidDeviceInfo {
 		uintptr(unsafe.Pointer(&infoBuf[0])), uintptr(unsafe.Pointer(&infoSize)),
 	)
 	if ret == ^uintptr(0) {
-		log.Printf("hidinput: GetRawInputDeviceInfo(RIDI_DEVICEINFO) failed for hDevice=0x%x", hDevice)
+		slog.Warn("hidinput: GetRawInputDeviceInfo(RIDI_DEVICEINFO) failed", "hDevice", fmt.Sprintf("0x%x", hDevice))
 		dev.isInvalid = true
 		return dev
 	}
@@ -296,7 +296,7 @@ func initHIDDevice(hDevice uintptr) *hidDeviceInfo {
 	var prepSize uint32
 	procGetRawInputDevInfo.Call(hDevice, ridiPreparsed, 0, uintptr(unsafe.Pointer(&prepSize)))
 	if prepSize == 0 {
-		log.Printf("hidinput: no preparsed data for %s", dev.name)
+		slog.Warn("hidinput: no preparsed data", "device", dev.name)
 		dev.isInvalid = true
 		return dev
 	}
@@ -306,7 +306,7 @@ func initHIDDevice(hDevice uintptr) *hidDeviceInfo {
 		uintptr(unsafe.Pointer(&dev.preparsedData[0])), uintptr(unsafe.Pointer(&prepSize)),
 	)
 	if ret == ^uintptr(0) {
-		log.Printf("hidinput: GetRawInputDeviceInfo(RIDI_PREPARSEDDATA) failed for %s", dev.name)
+		slog.Warn("hidinput: GetRawInputDeviceInfo(RIDI_PREPARSEDDATA) failed", "device", dev.name)
 		dev.isInvalid = true
 		return dev
 	}
@@ -315,7 +315,7 @@ func initHIDDevice(hDevice uintptr) *hidDeviceInfo {
 
 	status, _, _ := procHidPGetCaps.Call(ppd, uintptr(unsafe.Pointer(&dev.caps)))
 	if status != hidpStatusSuccess {
-		log.Printf("hidinput: HidP_GetCaps failed (0x%08x) for %s", status, dev.name)
+		slog.Warn("hidinput: HidP_GetCaps failed", "status", fmt.Sprintf("0x%08x", status), "device", dev.name)
 		dev.isInvalid = true
 		return dev
 	}
@@ -330,7 +330,7 @@ func initHIDDevice(hDevice uintptr) *hidDeviceInfo {
 			ppd,
 		)
 		if status != hidpStatusSuccess {
-			log.Printf("hidinput: HidP_GetValueCaps failed (0x%08x) for %s", status, dev.name)
+			slog.Warn("hidinput: HidP_GetValueCaps failed", "status", fmt.Sprintf("0x%08x", status), "device", dev.name)
 			dev.valueCaps = nil
 		} else {
 			dev.valueCaps = dev.valueCaps[:vcLen]
@@ -347,7 +347,7 @@ func initHIDDevice(hDevice uintptr) *hidDeviceInfo {
 			ppd,
 		)
 		if status != hidpStatusSuccess {
-			log.Printf("hidinput: HidP_GetButtonCaps failed (0x%08x) for %s", status, dev.name)
+			slog.Warn("hidinput: HidP_GetButtonCaps failed", "status", fmt.Sprintf("0x%08x", status), "device", dev.name)
 			dev.buttonCaps = nil
 		} else {
 			dev.buttonCaps = dev.buttonCaps[:bcLen]
@@ -370,12 +370,10 @@ func initHIDDevice(hDevice uintptr) *hidDeviceInfo {
 
 	if dev.sdlMap != nil {
 		dev.name = fmt.Sprintf("%s (VID_%04X&PID_%04X)", dev.sdlMap.Name, dev.vendorID, dev.productID)
-		log.Printf("hidinput: initialised %s — sdlAxes=%d sdlButtons=%d hid_axes=%d buttons=%d [SDL DB]",
-			dev.name, len(dev.sdlMap.Axes), len(dev.sdlMap.Buttons), len(dev.axisOrder), dev.buttonCount)
+		slog.Info("hidinput: initialised device [SDL DB]", "device", dev.name, "sdlAxes", len(dev.sdlMap.Axes), "sdlButtons", len(dev.sdlMap.Buttons), "hidAxes", len(dev.axisOrder), "buttons", dev.buttonCount)
 	} else {
 		dev.axisMap = buildAxisMap(dev.mapping)
-		log.Printf("hidinput: initialised %s — axes=%d buttons=%d",
-			dev.name, len(dev.valueCaps), dev.buttonCount)
+		slog.Info("hidinput: initialised device", "device", dev.name, "axes", len(dev.valueCaps), "buttons", dev.buttonCount)
 	}
 
 	return dev
@@ -418,7 +416,7 @@ func buildAxisOrder(valueCaps []hidpValueCaps) []hidAxisEntry {
 // parseHIDReport — top-level dispatcher
 // ---------------------------------------------------------------------------
 
-func parseHIDReport(dev *hidDeviceInfo, rawData []byte) GamepadState {
+func parseHIDReport(dev *hidDeviceInfo, rawData []byte, dz float64) GamepadState {
 	controllerType := dev.mapping.Name
 	if dev.sdlMap != nil {
 		controllerType = sdlNameToControllerType(dev.sdlMap.Name)
@@ -437,9 +435,9 @@ func parseHIDReport(dev *hidDeviceInfo, rawData []byte) GamepadState {
 	pressedButtons := collectPressedButtons(dev, ppd, reportPtr, reportLen)
 
 	if dev.sdlMap != nil {
-		parseHIDReportSDL(dev, &state, ppd, reportPtr, reportLen, pressedButtons)
+		parseHIDReportSDL(dev, &state, ppd, reportPtr, reportLen, pressedButtons, dz)
 	} else {
-		parseHIDReportLegacy(dev, &state, ppd, reportPtr, reportLen, pressedButtons)
+		parseHIDReportLegacy(dev, &state, ppd, reportPtr, reportLen, pressedButtons, dz)
 	}
 
 	return state
@@ -534,7 +532,7 @@ func collectPressedButtons(dev *hidDeviceInfo, ppd, reportPtr uintptr, reportLen
 // parseHIDReportSDL — SDL gamecontrollerdb mapping path
 // ---------------------------------------------------------------------------
 
-func parseHIDReportSDL(dev *hidDeviceInfo, state *GamepadState, ppd, reportPtr uintptr, reportLen uint32, pressedButtons []uint16) {
+func parseHIDReportSDL(dev *hidDeviceInfo, state *GamepadState, ppd, reportPtr uintptr, reportLen uint32, pressedButtons []uint16, dz float64) {
 	sm := dev.sdlMap
 
 	// --- Axes ---
@@ -599,7 +597,7 @@ func parseHIDReportSDL(dev *hidDeviceInfo, state *GamepadState, ppd, reportPtr u
 			continue
 		}
 
-		normalized = applyDeadzone(normalized, deadzone)
+		normalized = applyDeadzone(normalized, dz)
 		applyAxisToState(state, ab.Target, normalized)
 	}
 
@@ -628,7 +626,7 @@ func parseHIDReportSDL(dev *hidDeviceInfo, state *GamepadState, ppd, reportPtr u
 // parseHIDReportLegacy — usage-code-based fallback path
 // ---------------------------------------------------------------------------
 
-func parseHIDReportLegacy(dev *hidDeviceInfo, state *GamepadState, ppd, reportPtr uintptr, reportLen uint32, pressedButtons []uint16) {
+func parseHIDReportLegacy(dev *hidDeviceInfo, state *GamepadState, ppd, reportPtr uintptr, reportLen uint32, pressedButtons []uint16, dz float64) {
 	for i := range dev.valueCaps {
 		vc := &dev.valueCaps[i]
 		usageMin := vc.UsageMin
@@ -666,7 +664,7 @@ func parseHIDReportLegacy(dev *hidDeviceInfo, state *GamepadState, ppd, reportPt
 			}
 			isTrigger := target == "lt" || target == "rt"
 			normalized := normalizeHIDAxis(value, lMin, lMax, isTrigger)
-			normalized = applyDeadzone(normalized, deadzone)
+			normalized = applyDeadzone(normalized, dz)
 			applyAxisToState(state, target, normalized)
 		}
 	}

@@ -1,7 +1,7 @@
 package hub
 
 import (
-	"log"
+	"log/slog"
 	"sync"
 )
 
@@ -64,7 +64,7 @@ func (h *Hub) Run() {
 			h.mu.Lock()
 			h.clients[client] = true
 			h.mu.Unlock()
-			log.Printf("Client connected (total: %d)", len(h.clients))
+			slog.Info("client connected", "total", len(h.clients))
 
 		case client := <-h.unregister:
 			h.mu.Lock()
@@ -72,7 +72,7 @@ func (h *Hub) Run() {
 				delete(h.clients, client)
 			}
 			h.mu.Unlock()
-			log.Printf("Client disconnected (total: %d)", len(h.clients))
+			slog.Info("client disconnected", "total", len(h.clients))
 		}
 	}
 }

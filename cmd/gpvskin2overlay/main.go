@@ -17,7 +17,7 @@ package main
 import (
 	"flag"
 	"fmt"
-	"log"
+	"log/slog"
 	"os"
 	"path/filepath"
 
@@ -72,18 +72,13 @@ func main() {
 	}
 	outDir = filepath.Clean(outDir)
 
-	log.Printf("CSS source : %s", *cssSource)
-	log.Printf("Skin       : %s", *skin)
-	if *variant != "" {
-		log.Printf("Variant    : %s", *variant)
-	}
-	log.Printf("Output dir : %s", outDir)
+	slog.Info("gpvskin2overlay", "cssSource", *cssSource, "skin", *skin, "variant", *variant, "outDir", outDir)
 
 	if err := gpvskin.Convert(*cssSource, *skin, *variant, outDir, *svgTool, *scale); err != nil {
-		log.Fatalf("Conversion failed: %v", err)
+		slog.Error("conversion failed", "error", err)
+		os.Exit(1)
 	}
 
 	name := filepath.Base(outDir)
-	log.Printf("Done: %s/%s.json + %s/%s.png", outDir, name, outDir, name)
-	log.Printf("Use with: http://localhost:8080/?overlay=%s", name)
+	slog.Info("done", "json", outDir+"/"+name+".json", "png", outDir+"/"+name+".png", "url", "http://localhost:8080/?overlay="+name)
 }

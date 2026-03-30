@@ -1,0 +1,24 @@
+# InputView configuration file
+# Place this file as "inputview.toml" next to the executable.
+# All settings are optional; defaults are shown commented-out.
+
+# HTTP listen address (default: :8080)
+# addr = ":8080"
+
+# Gamepad/keyboard poll rate in milliseconds (default: 16 ≈ 60 Hz)
+# poll-rate = 16
+
+# Analog stick deadzone, range 0.0-1.0 (default: 0.05)
+# deadzone = 0.05
+
+# Mouse movement sensitivity divisor. Lower = more sensitive. (default: 500)
+# mouse-sens = 500.0
+
+# Directory containing Input Overlay presets, relative to executable (default: overlays)
+# overlay-dir = "overlays"
+
+# SDL GameControllerDB filename, relative to executable (default: gamecontrollerdb.txt)
+# sdl-db = "gamecontrollerdb.txt"
+
+# Log level: debug, info, warn, error (default: info)
+# log-level = "info"

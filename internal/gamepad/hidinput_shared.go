@@ -213,6 +213,9 @@ func sdlNameToControllerType(sdlName string) string {
 		strings.Contains(lower, "ps3") || strings.Contains(lower, "ps2") ||
 		strings.Contains(lower, "ps1"):
 		return "PlayStation"
+	case strings.Contains(lower, "switch pro") || strings.Contains(lower, "pro controller") ||
+		strings.Contains(lower, "nintendo switch"):
+		return "switch_pro"
 	default:
 		return "Xbox"
 	}

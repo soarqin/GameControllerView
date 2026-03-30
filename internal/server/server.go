@@ -2,18 +2,37 @@ package server
 
 import (
 	"context"
+	"encoding/json"
 	"io/fs"
-	"log"
+	"log/slog"
 	"mime"
 	"net/http"
 	"os"
 	"path"
 	"path/filepath"
 	"strings"
+	"time"
 
 	"github.com/soar/inputview/internal/gamepad"
 	"github.com/soar/inputview/internal/hub"
 )
+
+type healthResponse struct {
+	Status        string            `json:"status"`
+	Version       string            `json:"version"`
+	UptimeSeconds int64             `json:"uptime_seconds"`
+	Listeners     map[string]string `json:"listeners"`
+}
+
+type responseWriter struct {
+	http.ResponseWriter
+	status int
+}
+
+func (rw *responseWriter) WriteHeader(code int) {
+	rw.status = code
+	rw.ResponseWriter.WriteHeader(code)
+}
 
 type Server struct {
 	hub         *hub.Hub
@@ -23,11 +42,13 @@ type Server struct {
 	frontendFS  fs.FS
 	gzipCache   map[string][]byte
 	exeDir      string
+	overlayDir  string
 	addr        string
 	httpServer  *http.Server
+	startTime   time.Time
 }
 
-func New(h *hub.Hub, b *hub.Broadcaster, r *gamepad.Reader, sensSetter hub.MouseSensitivitySetter, frontendFS fs.FS, gzipCache map[string][]byte, exeDir string, addr string) *Server {
+func New(h *hub.Hub, b *hub.Broadcaster, r *gamepad.Reader, sensSetter hub.MouseSensitivitySetter, frontendFS fs.FS, gzipCache map[string][]byte, exeDir string, overlayDir string, addr string) *Server {
 	return &Server{
 		hub:         h,
 		broadcaster: b,
@@ -36,21 +57,35 @@ func New(h *hub.Hub, b *hub.Broadcaster, r *gamepad.Reader, sensSetter hub.Mouse
 		frontendFS:  frontendFS,
 		gzipCache:   gzipCache,
 		exeDir:      exeDir,
+		overlayDir:  overlayDir,
 		addr:        addr,
+		startTime:   time.Now(),
 	}
 }
 
 func (s *Server) ListenAndServe() error {
 	mux := http.NewServeMux()
 
+	// Health check endpoint
+	mux.HandleFunc("/health", func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		resp := healthResponse{
+			Status:        "ok",
+			Version:       "0.3.0",
+			UptimeSeconds: int64(time.Since(s.startTime).Seconds()),
+			Listeners:     map[string]string{"addr": s.addr},
+		}
+		json.NewEncoder(w).Encode(resp)
+	})
+
 	// WebSocket endpoint
 	mux.HandleFunc("/ws", handleWebSocket(s.hub, s.broadcaster, s.reader, s.sensSetter))
 
 	// External overlays directory (next to the executable): /overlays/
 	// This takes priority over the embedded overlays so users can override or add configs.
-	overlaysDir := filepath.Join(s.exeDir, "overlays")
+	overlaysDir := filepath.Join(s.exeDir, s.overlayDir)
 	if info, err := os.Stat(overlaysDir); err == nil && info.IsDir() {
-		log.Printf("Serving external overlays from: %s", overlaysDir)
+		slog.Info("serving external overlays", "dir", overlaysDir)
 		mux.Handle("/overlays/", http.StripPrefix("/overlays/", http.FileServer(http.Dir(overlaysDir))))
 	}
 
@@ -59,16 +94,16 @@ func (s *Server) ListenAndServe() error {
 
 	s.httpServer = &http.Server{
 		Addr:    s.addr,
-		Handler: mux,
+		Handler: loggingMiddleware(mux),
 	}
 
-	log.Printf("HTTP server listening on %s", s.addr)
+	slog.Info("HTTP server listening", "addr", s.addr)
 	return s.httpServer.ListenAndServe()
 }
 
 func (s *Server) Shutdown(ctx context.Context) error {
 	if s.httpServer != nil {
-		log.Println("Shutting down HTTP server...")
+		slog.Info("shutting down HTTP server")
 		return s.httpServer.Shutdown(ctx)
 	}
 	return nil
@@ -138,4 +173,25 @@ func acceptsGzip(r *http.Request) bool {
 		}
 	}
 	return false
+}
+
+// loggingMiddleware logs HTTP requests to stderr via slog, excluding /ws and /health paths.
+func loggingMiddleware(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		// Skip logging for /ws and /health
+		if r.URL.Path == "/ws" || r.URL.Path == "/health" {
+			next.ServeHTTP(w, r)
+			return
+		}
+		start := time.Now()
+		rw := &responseWriter{ResponseWriter: w, status: http.StatusOK}
+		next.ServeHTTP(rw, r)
+		slog.Info("http request",
+			"method", r.Method,
+			"path", r.URL.Path,
+			"status", rw.status,
+			"duration", time.Since(start).String(),
+			"ip", r.RemoteAddr,
+		)
+	})
 }

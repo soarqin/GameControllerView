@@ -2,10 +2,11 @@ package gamepad
 
 import (
 	"bytes"
-	"log"
+	"log/slog"
 	"os"
 	"runtime"
 	"sync"
+	"time"
 )
 
 // globalSDLMappings holds SDL gamecontrollerdb entries loaded at startup.
@@ -42,7 +43,7 @@ func LoadSDLDB(externalPath string) {
 	// Load embedded DB as the base.
 	merged, err := LoadSDLMappingsFromReader(bytes.NewReader(embeddedGameControllerDB), platform)
 	if err != nil {
-		log.Printf("sdldb: failed to parse embedded DB: %v", err)
+		slog.Warn("sdldb: failed to parse embedded DB", "error", err)
 		merged = make(map[deviceKey]*SDLMapping)
 	}
 
@@ -51,12 +52,12 @@ func LoadSDLDB(externalPath string) {
 		if _, statErr := os.Stat(externalPath); statErr == nil {
 			ext, extErr := LoadSDLMappingsFromFile(externalPath, platform)
 			if extErr != nil {
-				log.Printf("sdldb: failed to load %q: %v", externalPath, extErr)
+				slog.Warn("sdldb: failed to load external db", "path", externalPath, "error", extErr)
 			} else {
 				for k, v := range ext {
 					merged[k] = v
 				}
-				log.Printf("sdldb: merged external %q (%d entries total)", externalPath, len(merged))
+				slog.Info("sdldb: merged external db", "path", externalPath, "total", len(merged))
 			}
 		}
 	}
@@ -99,6 +100,12 @@ type Reader struct {
 	changes       chan GamepadState
 	mu            sync.RWMutex
 
+	// deadzone is the analog stick deadzone threshold (0.0-1.0).
+	deadzone float64
+
+	// pollDelay is the interval between XInput polling cycles.
+	pollDelay time.Duration
+
 	// hidDevices caches per-device HID capability info.
 	// Only accessed under r.mu.
 	hidDevices map[uintptr]*hidDeviceInfo
@@ -122,15 +129,23 @@ type joystickInfo struct {
 	hDevice    uintptr // HID device handle; only valid when sourceType=="hid"
 }
 
-// NewReader creates a new Reader.
+// NewReader creates a new Reader with default deadzone and poll rate.
 func NewReader() *Reader {
 	return &Reader{
 		joysticks:        make(map[joystickKey]*joystickInfo),
 		hidDevices:       make(map[uintptr]*hidDeviceInfo),
 		disconnectedHIDs: make(map[uintptr]struct{}),
 		changes:          make(chan GamepadState, 64),
+		deadzone:         0.05,
+		pollDelay:        16 * time.Millisecond,
 	}
 }
+
+// SetDeadzone sets the analog stick deadzone threshold (0.0-1.0).
+func (r *Reader) SetDeadzone(dz float64) { r.deadzone = dz }
+
+// SetPollDelay sets the interval between XInput polling cycles.
+func (r *Reader) SetPollDelay(d time.Duration) { r.pollDelay = d }
 
 // Changes returns the channel on which state changes are emitted.
 func (r *Reader) Changes() <-chan GamepadState {

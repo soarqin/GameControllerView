@@ -3,7 +3,7 @@
 package main
 
 import (
-	"log"
+	"log/slog"
 	"runtime"
 
 	"github.com/soar/inputview/internal/console"
@@ -21,9 +21,9 @@ func setupShutdown(exeDir string) <-chan struct{} {
 	console.SetupConsoleHandler(ch)
 
 	if runtime.GOOS == "windows" {
-		log.Println("Running in console mode. Press Ctrl+C or Ctrl+Break to exit.")
+		slog.Info("running in console mode", "exit", "Ctrl+C or Ctrl+Break")
 	} else {
-		log.Println("Press Ctrl+C to exit.")
+		slog.Info("running", "exit", "Ctrl+C")
 	}
 
 	return ch

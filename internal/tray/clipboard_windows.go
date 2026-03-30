@@ -3,7 +3,7 @@
 package tray
 
 import (
-	"log"
+	"log/slog"
 	"syscall"
 	"unsafe"
 )
@@ -32,7 +32,7 @@ func copyToClipboard(text string) {
 	// Encode text as UTF-16 with null terminator.
 	utf16, err := syscall.UTF16FromString(text)
 	if err != nil {
-		log.Printf("Clipboard: UTF16 encoding failed: %v", err)
+		slog.Error("clipboard: UTF16 encoding failed", "error", err)
 		return
 	}
 	byteLen := uintptr(len(utf16) * 2)
@@ -40,7 +40,7 @@ func copyToClipboard(text string) {
 	// Allocate moveable global memory.
 	hMem, _, err := procGlobalAlloc.Call(gmemMoveable, byteLen)
 	if hMem == 0 {
-		log.Printf("Clipboard: GlobalAlloc failed: %v", err)
+		slog.Error("clipboard: GlobalAlloc failed", "error", err)
 		return
 	}
 
@@ -56,7 +56,7 @@ func copyToClipboard(text string) {
 	// Lock and write UTF-16 data.
 	ptr, _, err := procGlobalLock.Call(hMem)
 	if ptr == 0 {
-		log.Printf("Clipboard: GlobalLock failed: %v", err)
+		slog.Error("clipboard: GlobalLock failed", "error", err)
 		return
 	}
 	// nolint: gosec — ptr is a system-allocated handle from GlobalLock, not GC-managed memory.
@@ -67,7 +67,7 @@ func copyToClipboard(text string) {
 	// Open clipboard, empty it, set data, close.
 	ret, _, err := procOpenClipboard.Call(0)
 	if ret == 0 {
-		log.Printf("Clipboard: OpenClipboard failed: %v", err)
+		slog.Error("clipboard: OpenClipboard failed", "error", err)
 		return
 	}
 	defer procCloseClipboard.Call()
@@ -75,7 +75,7 @@ func copyToClipboard(text string) {
 	procEmptyClipboard.Call()
 	ret, _, err = procSetClipboardData.Call(cfUnicodeText, hMem)
 	if ret == 0 {
-		log.Printf("Clipboard: SetClipboardData failed: %v", err)
+		slog.Error("clipboard: SetClipboardData failed", "error", err)
 		return
 	}
 	// SetClipboardData succeeded — the system now owns hMem.

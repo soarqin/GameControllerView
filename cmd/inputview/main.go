@@ -2,7 +2,8 @@ package main
 
 import (
 	"context"
-	"log"
+	"fmt"
+	"log/slog"
 	"net/http"
 	"os"
 	"os/signal"
@@ -10,6 +11,7 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/soar/inputview/internal/config"
 	"github.com/soar/inputview/internal/gamepad"
 	"github.com/soar/inputview/internal/hub"
 	"github.com/soar/inputview/internal/rawinput"
@@ -18,25 +20,41 @@ import (
 )
 
 func main() {
-	// Create cancellable context
-	ctx, cancel := context.WithCancel(context.Background())
-	defer cancel()
+	// Set up structured logging. Use TextHandler (not JSON) for desktop app.
+	slogLevel := &slog.LevelVar{}
+	slogLevel.Set(slog.LevelInfo)
+	slogHandler := slog.NewTextHandler(os.Stderr, &slog.HandlerOptions{Level: slogLevel})
+	slog.SetDefault(slog.New(slogHandler))
 
-	// Create gamepad reader
-	reader := gamepad.NewReader()
-
-	// Determine the directory containing this executable early (needed for SDL DB path).
+	// Determine the directory containing this executable early (needed for config + SDL DB path).
 	appExeDir := "."
 	if exe, err := os.Executable(); err == nil {
 		appExeDir = filepath.Dir(exe)
 	} else {
-		log.Printf("Warning: could not determine executable path: %v", err)
+		slog.Warn("could not determine executable path", "error", err)
 	}
+
+	// Load configuration (flags + optional inputview.toml). Must happen before
+	// anything else so all settings are available to subsystem setup.
+	cfg, err := config.Load(appExeDir)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "config error: %v\n", err)
+		os.Exit(1)
+	}
+
+	// Create cancellable context
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	// Create gamepad reader and apply config settings.
+	reader := gamepad.NewReader()
+	reader.SetDeadzone(cfg.Deadzone)
+	reader.SetPollDelay(time.Duration(cfg.PollRate) * time.Millisecond)
 
 	// Load SDL GameControllerDB. The embedded database is always used as a base;
 	// an external gamecontrollerdb.txt next to the executable (if present) is
 	// merged on top so users can update mappings without recompiling.
-	sdlDBPath := filepath.Join(appExeDir, "gamecontrollerdb.txt")
+	sdlDBPath := filepath.Join(appExeDir, cfg.SDLDBPath)
 	gamepad.LoadSDLDB(sdlDBPath)
 
 	// Set up shutdown handling (console Ctrl+C or system tray, depending on build mode).
@@ -53,6 +71,7 @@ func main() {
 	// Create Raw Input reader for keyboard and mouse (Windows: global capture via Raw Input API).
 	// Also used as the shared HWND_MESSAGE window for HID gamepad input.
 	kmReader := rawinput.New()
+	kmReader.SetMouseSensitivity(float32(cfg.MouseSensitivity))
 
 	// Register HID gamepad callbacks on the Raw Input window so that non-XInput
 	// controllers (PS4/PS5/Switch Pro/generic HID) are captured alongside XInput.
@@ -64,7 +83,7 @@ func main() {
 	go broadcaster.Run()
 
 	// Create and start HTTP server
-	srv := server.New(h, broadcaster, reader, kmReader, web.FrontendFS(), web.GzipCache(), appExeDir, ":8080")
+	srv := server.New(h, broadcaster, reader, kmReader, web.FrontendFS(), web.GzipCache(), appExeDir, cfg.OverlayDir, cfg.Addr)
 	serverErrCh := make(chan error, 1)
 	go func() {
 		if err := srv.ListenAndServe(); err != nil && err != http.ErrServerClosed {
@@ -72,7 +91,7 @@ func main() {
 		}
 	}()
 
-	log.Println("InputView started: http://localhost:8080")
+	slog.Info("InputView started", "addr", "http://localhost"+cfg.Addr)
 
 	// Run gamepad reader (XInput polling loop, ~60 Hz)
 	readerDone := make(chan struct{})
@@ -89,18 +108,18 @@ func main() {
 	if extraShutdownCh != nil {
 		select {
 		case <-sigCh:
-			log.Println("Shutting down...")
+			slog.Info("shutting down")
 		case <-extraShutdownCh:
-			log.Println("Shutdown requested")
+			slog.Info("shutdown requested")
 		case err := <-serverErrCh:
-			log.Printf("HTTP server error: %v", err)
+			slog.Error("HTTP server error", "error", err)
 		}
 	} else {
 		select {
 		case <-sigCh:
-			log.Println("Shutting down...")
+			slog.Info("shutting down")
 		case err := <-serverErrCh:
-			log.Printf("HTTP server error: %v", err)
+			slog.Error("HTTP server error", "error", err)
 		}
 	}
 	cancel()
@@ -112,8 +131,8 @@ func main() {
 	shutdownCtx, shutdownCancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer shutdownCancel()
 	if err := srv.Shutdown(shutdownCtx); err != nil {
-		log.Printf("HTTP server shutdown error: %v", err)
+		slog.Error("HTTP server shutdown error", "error", err)
 	}
 
-	log.Println("InputView stopped")
+	slog.Info("InputView stopped")
 }

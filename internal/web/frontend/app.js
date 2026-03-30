@@ -36,6 +36,7 @@ let overlayName = null;
 let overlayConfig = null;   // parsed JSON from Input Overlay config file
 let overlayTexture = null;  // HTMLImageElement of the texture atlas
 let overlayReady = false;   // true once both config and texture are loaded
+let overlayLoadFailed = false;  // true if texture failed to load
 
 // Overlay content flags — set once the config JSON is parsed.
 // overlayHasGamepad: config contains at least one gamepad element (type 2/5/6/7/8)
@@ -58,6 +59,13 @@ const kmState = {
 };
 // How long (ms) to keep wheel state active before resetting to neutral
 const WHEEL_TIMEOUT_MS = 200;
+const RECONNECT_DELAY_INITIAL = 1000;
+const RECONNECT_DELAY_MAX = 10000;
+const CANVAS_WIDTH = 500;
+const CANVAS_HEIGHT = 330;
+const TRIGGER_PRESS_THRESHOLD = 0.1;
+const OVERLAY_SPRITE_BORDER = 3;
+const MAX_PLAYER_INDEX = 16;
 
 // Whether we have already subscribed to keyboard/mouse events for this session
 let kmSubscribed = false;
@@ -70,8 +78,8 @@ let dirty = true;
 // ============================================================
 
 let ws = null;
-let reconnectDelay = 1000;
-const maxReconnectDelay = 10000;
+let reconnectDelay = RECONNECT_DELAY_INITIAL;
+const maxReconnectDelay = RECONNECT_DELAY_MAX;
 
 function connectWebSocket() {
     const protocol = location.protocol === 'https:' ? 'wss:' : 'ws:';
@@ -80,7 +88,7 @@ function connectWebSocket() {
     ws = new WebSocket(url);
 
     ws.onopen = () => {
-        reconnectDelay = 1000;
+        reconnectDelay = RECONNECT_DELAY_INITIAL;
         setWSStatus(true);
         // Send selected player index to backend, unless the overlay has no gamepad elements
         // (in that case we don't need gamepad data at all).
@@ -296,17 +304,22 @@ function loadConfigIfNeeded() {
         'xbox': 'xbox',
         'playstation': 'playstation',
         'playstation5': 'playstation',
+        'switch_pro': 'switch_pro',
     };
     const configName = configMap[type] || 'xbox';
 
     fetch(`configs/${configName}.json`)
-        .then(r => r.json())
+        .then(r => {
+            if (!r.ok) throw new Error('HTTP ' + r.status);
+            return r.json();
+        })
         .then(config => {
             configCache[type] = config;
             currentConfig = config;
             dirty = true;
         })
-        .catch(() => {
+        .catch(e => {
+            console.warn('Config load failed:', configName, e);
             // Fallback to xbox
             if (type !== 'xbox') {
                 loadedConfigType = '';
@@ -405,6 +418,12 @@ function loadInputOverlayConfig(name) {
             return r.json();
         })
         .then(cfg => {
+            if (!cfg.overlay_width || !cfg.overlay_height || cfg.overlay_width <= 0 || cfg.overlay_height <= 0) {
+                console.warn('Invalid overlay config: missing or invalid overlay_width/overlay_height');
+            }
+            if (cfg.elements && !Array.isArray(cfg.elements)) {
+                console.warn('Invalid overlay config: elements must be an array');
+            }
             overlayConfig = cfg;
             analyzeOverlayContent(cfg);
             if (cfg.overlay_width && cfg.overlay_height) {
@@ -424,7 +443,9 @@ function loadInputOverlayConfig(name) {
                 console.log(`Input Overlay '${name}' loaded (${cfg.overlay_width}x${cfg.overlay_height})`);
             };
             img.onerror = () => {
-                console.error(`Failed to load texture: ${pngUrl}`);
+                overlayLoadFailed = true;
+                dirty = true;
+                console.error('Failed to load overlay texture:', pngUrl);
                 // Do NOT set overlayReady — render loop will stay idle.
                 // Show error in the status bar so the user knows what went wrong.
                 const statusEl = document.getElementById('status');
@@ -481,14 +502,20 @@ function ioDrawTriggerFill(sx, sy, sw, sh, dx, dy, dw, dh, fillRatio, direction)
 }
 
 function drawInputOverlay() {
-    if (!overlayConfig) {
-        if (!simpleMode && overlayHasGamepad) drawDisconnected();
-        return;
-    }
-    if (!overlayReady) return;
-
-    const elements = overlayConfig.elements || [];
-    const BORDER = 3;
+     if (!overlayConfig) {
+         if (!simpleMode && overlayHasGamepad) drawDisconnected();
+         return;
+     }
+     if (overlayLoadFailed) {
+         ctx.fillStyle = '#ff0000';
+         ctx.font = '16px sans-serif';
+         ctx.textAlign = 'center';
+         ctx.fillText('Texture failed to load', canvasW / 2, canvasH / 2);
+         return;
+     }
+     if (!overlayReady) return;
+ 
+     const elements = overlayConfig.elements || [];
 
     for (const el of elements) {
         const type = el.type;
@@ -503,86 +530,86 @@ function drawInputOverlay() {
                 ioDrawSprite(mu, mv, mw, mh, dx, dy, dw, dh);
                 break;
             }
-            case 1: {
-                // Keyboard key
-                const sv = kmState.keys[el.code] ? mv + mh + BORDER : mv;
-                ioDrawSprite(mu, sv, mw, mh, dx, dy, dw, dh);
-                break;
-            }
-            case 2: {
-                // Gamepad button (digital)
-                const sv = ioButtonPressed(el.code) ? mv + mh + BORDER : mv;
-                ioDrawSprite(mu, sv, mw, mh, dx, dy, dw, dh);
-                break;
-            }
-            case 3: {
-                // Mouse button
-                const sv = kmState.mouseButtons[el.code] ? mv + mh + BORDER : mv;
-                ioDrawSprite(mu, sv, mw, mh, dx, dy, dw, dh);
-                break;
-            }
-            case 4: {
-                // Mouse wheel — 4 horizontal frames: neutral / middle-pressed / scroll-up / scroll-down
-                const now = performance.now();
-                const wheelExpired = (now - kmState.wheelTimestamp) > WHEEL_TIMEOUT_MS;
-                if (wheelExpired) {
-                    kmState.wheelUp = false;
-                    kmState.wheelDown = false;
-                }
-                ioDrawSprite(mu, mv, mw, mh, dx, dy, dw, dh);
-                if (kmState.mouseButtons[3]) {
-                    ioDrawSprite(mu + (mw + BORDER), mv, mw, mh, dx, dy, dw, dh);
-                }
-                if (kmState.wheelUp && !wheelExpired) {
-                    ioDrawSprite(mu + (mw + BORDER) * 2, mv, mw, mh, dx, dy, dw, dh);
-                }
-                if (kmState.wheelDown && !wheelExpired) {
-                    ioDrawSprite(mu + (mw + BORDER) * 3, mv, mw, mh, dx, dy, dw, dh);
-                }
-                break;
-            }
-            case 5: {
-                // Analog stick
-                const side = el.side === 1 ? 'right' : 'left';
-                const stickState = state.sticks[side];
-                const radius = el.stick_radius || 40;
-                const kx = stickState.position.x * radius;
-                const ky = -stickState.position.y * radius;
-                const sv = stickState.pressed ? mv + mh + BORDER : mv;
-                ioDrawSprite(mu, sv, mw, mh, dx + kx, dy + ky, dw, dh);
-                break;
-            }
-            case 6: {
-                // Trigger
-                const side = el.side === 1 ? 'rt' : 'lt';
-                const value = state.triggers[side].value;
-                const direction = el.direction || 1;
-                if (el.trigger_mode === true) {
-                    const sv = value > 0.1 ? mv + mh + BORDER : mv;
-                    ioDrawSprite(mu, sv, mw, mh, dx, dy, dw, dh);
-                } else {
-                    ioDrawSprite(mu, mv, mw, mh, dx, dy, dw, dh);
-                    if (value > 0) {
-                        ioDrawTriggerFill(mu, mv + mh + BORDER, mw, mh, dx, dy, dw, dh, value, direction);
-                    }
-                }
-                break;
-            }
-            case 7: {
-                // Gamepad player ID / guide button indicator
-                const playerIdx = Math.min(Math.max((selectedPlayerIndex || 1) - 1, 0), 3);
-                if (state.buttons.guide) {
-                    ioDrawSprite(mu + 4 * (mw + BORDER), mv, mw, mh, dx, dy, dw, dh);
-                }
-                ioDrawSprite(mu + playerIdx * (mw + BORDER), mv, mw, mh, dx, dy, dw, dh);
-                break;
-            }
-            case 8: {
-                // Composite D-pad
-                const dsx = mu + ioDpadIndex() * (mw + BORDER);
-                ioDrawSprite(dsx, mv, mw, mh, dx, dy, dw, dh);
-                break;
-            }
+             case 1: {
+                 // Keyboard key
+                 const sv = kmState.keys[el.code] ? mv + mh + OVERLAY_SPRITE_BORDER : mv;
+                 ioDrawSprite(mu, sv, mw, mh, dx, dy, dw, dh);
+                 break;
+             }
+             case 2: {
+                 // Gamepad button (digital)
+                 const sv = ioButtonPressed(el.code) ? mv + mh + OVERLAY_SPRITE_BORDER : mv;
+                 ioDrawSprite(mu, sv, mw, mh, dx, dy, dw, dh);
+                 break;
+             }
+             case 3: {
+                 // Mouse button
+                 const sv = kmState.mouseButtons[el.code] ? mv + mh + OVERLAY_SPRITE_BORDER : mv;
+                 ioDrawSprite(mu, sv, mw, mh, dx, dy, dw, dh);
+                 break;
+             }
+             case 4: {
+                 // Mouse wheel — 4 horizontal frames: neutral / middle-pressed / scroll-up / scroll-down
+                 const now = performance.now();
+                 const wheelExpired = (now - kmState.wheelTimestamp) > WHEEL_TIMEOUT_MS;
+                 if (wheelExpired) {
+                     kmState.wheelUp = false;
+                     kmState.wheelDown = false;
+                 }
+                 ioDrawSprite(mu, mv, mw, mh, dx, dy, dw, dh);
+                 if (kmState.mouseButtons[3]) {
+                     ioDrawSprite(mu + (mw + OVERLAY_SPRITE_BORDER), mv, mw, mh, dx, dy, dw, dh);
+                 }
+                 if (kmState.wheelUp && !wheelExpired) {
+                     ioDrawSprite(mu + (mw + OVERLAY_SPRITE_BORDER) * 2, mv, mw, mh, dx, dy, dw, dh);
+                 }
+                 if (kmState.wheelDown && !wheelExpired) {
+                     ioDrawSprite(mu + (mw + OVERLAY_SPRITE_BORDER) * 3, mv, mw, mh, dx, dy, dw, dh);
+                 }
+                 break;
+             }
+             case 5: {
+                 // Analog stick
+                 const side = el.side === 1 ? 'right' : 'left';
+                 const stickState = state.sticks[side];
+                 const radius = el.stick_radius || 40;
+                 const kx = stickState.position.x * radius;
+                 const ky = -stickState.position.y * radius;
+                 const sv = stickState.pressed ? mv + mh + OVERLAY_SPRITE_BORDER : mv;
+                 ioDrawSprite(mu, sv, mw, mh, dx + kx, dy + ky, dw, dh);
+                 break;
+             }
+             case 6: {
+                 // Trigger
+                 const side = el.side === 1 ? 'rt' : 'lt';
+                 const value = state.triggers[side].value;
+                 const direction = el.direction || 1;
+                 if (el.trigger_mode === true) {
+                     const sv = value > TRIGGER_PRESS_THRESHOLD ? mv + mh + OVERLAY_SPRITE_BORDER : mv;
+                     ioDrawSprite(mu, sv, mw, mh, dx, dy, dw, dh);
+                 } else {
+                     ioDrawSprite(mu, mv, mw, mh, dx, dy, dw, dh);
+                     if (value > 0) {
+                         ioDrawTriggerFill(mu, mv + mh + OVERLAY_SPRITE_BORDER, mw, mh, dx, dy, dw, dh, value, direction);
+                     }
+                 }
+                 break;
+             }
+             case 7: {
+                 // Gamepad player ID / guide button indicator
+                 const playerIdx = Math.min(Math.max((selectedPlayerIndex || 1) - 1, 0), 3);
+                 if (state.buttons.guide) {
+                     ioDrawSprite(mu + 4 * (mw + OVERLAY_SPRITE_BORDER), mv, mw, mh, dx, dy, dw, dh);
+                 }
+                 ioDrawSprite(mu + playerIdx * (mw + OVERLAY_SPRITE_BORDER), mv, mw, mh, dx, dy, dw, dh);
+                 break;
+             }
+             case 8: {
+                 // Composite D-pad
+                 const dsx = mu + ioDpadIndex() * (mw + OVERLAY_SPRITE_BORDER);
+                 ioDrawSprite(dsx, mv, mw, mh, dx, dy, dw, dh);
+                 break;
+             }
             case 9: {
                 // Mouse movement indicator
                 const radius = el.mouse_radius || 40;
@@ -616,10 +643,10 @@ const canvas = document.getElementById('gamepad-canvas');
 const ctx = canvas.getContext('2d');
 
 // Logical canvas dimensions.
-// In geometric mode: fixed 500×330.
+// In geometric mode: fixed CANVAS_WIDTH × CANVAS_HEIGHT.
 // In overlay mode: set to overlay_width × overlay_height once the config is loaded.
-let canvasW = 500;
-let canvasH = 330;
+let canvasW = CANVAS_WIDTH;
+let canvasH = CANVAS_HEIGHT;
 
 // Colors
 const COLORS = {
@@ -1143,7 +1170,7 @@ function init() {
     const playerParam = urlParams.get('p');
     if (playerParam !== null) {
         const p = parseInt(playerParam, 10);
-        if (!isNaN(p) && p >= 1) selectedPlayerIndex = p;
+        if (!isNaN(p) && p >= 1 && p <= MAX_PLAYER_INDEX) selectedPlayerIndex = p;
     }
 
     const alphaParam = urlParams.get('alpha');
@@ -1163,7 +1190,7 @@ function init() {
     const sensParam = urlParams.get('mouse_sens');
     if (sensParam !== null) {
         const sens = parseFloat(sensParam);
-        if (!isNaN(sens) && sens > 0) mouseSens = sens;
+        if (!isNaN(sens) && sens >= 1 && sens <= 10000) mouseSens = sens;
     }
 
     // Pre-compute body fill color after bodyAlpha is resolved

@@ -23,7 +23,14 @@ go build -o InputView.exe ./cmd/inputview
 # Equivalent manual command (Windows):
 go build -tags release -ldflags "-s -w -H=windowsgui" -o InputView.exe ./cmd/inputview
 
+# CLI flags (all optional, defaults work without config file)
+go run ./cmd/inputview --addr=:9090 --poll-rate=16 --deadzone=0.05 --mouse-sens=500 --log-level=info
+
+# Config file: place inputview.toml next to executable (see inputview.example.toml for all options)
+# CLI flags take priority over config file values
+
 # Open browser at http://localhost:8080
+# Health check: GET http://localhost:8080/health → {"status":"ok","version":"0.3.0","uptime_seconds":N,"listeners":{"addr":":8080"}}
 ```
 
 No external DLL required. Gamepad input uses XInput (`xinput1_4.dll`, built into Windows 8+) for Xbox-compatible controllers and `hid.dll` (built into all Windows versions) for HID gamepads.
@@ -47,6 +54,7 @@ InputView/
 ├── build.ps1                           # Windows release build script (-tags release, -H=windowsgui)
 ├── build.sh                            # Linux/macOS release build script (-tags release)
 ├── CHANGELOG.md                        # Version history (Keep a Changelog format)
+├── inputview.example.toml             # Example config file (copy as inputview.toml next to exe)
 ├── .github/
 │   └── workflows/
 │       └── release.yml                 # GitHub Actions: build & publish release on git tag push
@@ -62,6 +70,8 @@ InputView/
 │   └── gpvskin2overlay/
 │       └── main.go                     # CLI tool: convert GPV CSS skin → Input Overlay format
 └── internal/
+    ├── config/
+    │   └── config.go                   # Config struct + Load(exeDir) — pflag CLI flags + viper TOML parsing + validation
     ├── console/
     │   ├── console_windows.go          # Windows console detection & Ctrl+C handler (reusable)
     │   └── console_other.go            # Stub for non-Windows platforms
@@ -118,7 +128,6 @@ InputView/
             └── configs/                # Gamepad layout JSON configs
                 ├── xbox.json
                 ├── playstation.json
-                ├── playstation5.json
                 └── switch_pro.json
 ```
 
@@ -126,6 +135,42 @@ Input Overlay presets are **external only** — place them in an `overlays/` dir
 The server mounts this directory at `/overlays/`. Presets are **not** embedded in the binary (GPL-2.0 license conflict).
 
 ## Architecture Highlights
+
+### Configuration System
+
+`internal/config/config.go` provides `Load(exeDir string) (Config, error)`:
+
+1. **pflag** defines 7 CLI flags (parsed from `os.Args`). `--help` prints usage and exits 0.
+2. **viper** reads optional `inputview.toml` from `exeDir` or current directory.
+3. CLI flags take priority over TOML file (via `viper.BindPFlags`).
+4. Validation: deadzone 0.0–1.0; poll-rate ≥ 1; mouse-sens > 0; log-level ∈ {debug,info,warn,error}.
+
+**Config fields** (7):
+| Field | Flag | Default | Purpose |
+|-------|------|---------|---------|
+| `Addr` | `--addr` | `:8080` | HTTP listen address |
+| `PollRate` | `--poll-rate` | `16` | Gamepad poll interval (ms) |
+| `Deadzone` | `--deadzone` | `0.05` | Analog stick deadzone |
+| `MouseSensitivity` | `--mouse-sens` | `500.0` | Mouse delta divisor |
+| `OverlayDir` | `--overlay-dir` | `overlays` | Overlay presets directory |
+| `SDLDBPath` | `--sdl-db` | `gamecontrollerdb.txt` | SDL gamecontrollerdb path |
+| `LogLevel` | `--log-level` | `info` | Log level |
+
+`main.go` calls `config.Load()` first, then passes values to `reader.SetDeadzone()`, `reader.SetPollDelay()`, `kmReader.SetMouseSensitivity()`, and `server.New()`.
+
+### Logging
+
+All logging uses stdlib `log/slog` with a `TextHandler` writing to `os.Stderr`. Initialized at the very start of `main()` before any subsystems:
+
+```go
+slogLevel := &slog.LevelVar{}
+slogLevel.Set(slog.LevelInfo)
+slog.SetDefault(slog.New(slog.NewTextHandler(os.Stderr, &slog.HandlerOptions{Level: slogLevel})))
+```
+
+**`internal/web/embed.go`**: Runs in `init()` before `main()`, so slog is not yet configured. Uses `fmt.Fprintf(os.Stderr, ...)` instead. On walk error, falls back to serving raw (unminified) embedded files rather than panicking.
+
+**`internal/gamepad/reader_windows.go`**: XInput load failure (`procXInputGetState.Find()`) no longer calls `log.Fatalf` — it logs a warning and continues in HID-only mode, allowing PS4/PS5/Switch Pro controllers to work even if XInput DLL is missing.
 
 ### XInput Ordinal Exports
 
@@ -426,9 +471,13 @@ All drawing logic is in `internal/web/frontend/app.js` in `drawController()` and
 
 `pollDelay` constant in `internal/gamepad/reader_windows.go` (currently 16ms ≈ 60Hz).
 
+Override via `--poll-rate=<ms>` CLI flag or `poll-rate = <ms>` in `inputview.toml`.
+
 ### Modifying Deadzone
 
 `deadzone` constant in `internal/gamepad/reader_windows.go` (currently 0.05), `analogThreshold` constant in `internal/gamepad/state.go` (currently 0.01, used for delta comparison).
+
+Override via `--deadzone=<value>` CLI flag or `deadzone = <value>` in `inputview.toml`.
 
 ## Dependencies
 
@@ -440,3 +489,5 @@ All drawing logic is in `internal/web/frontend/app.js` in `drawController()` and
 | `github.com/godbus/dbus/v5` | Transitive (via systray, Linux only) |
 | `github.com/tdewolff/minify/v2` | JS/CSS/HTML/JSON minifier — runs at startup to pre-process embedded frontend assets |
 | `github.com/tdewolff/parse/v2` | Transitive dependency (via tdewolff/minify) |
+| `github.com/spf13/viper` | Configuration file + CLI flag parsing (TOML + pflag) |
+| `github.com/spf13/pflag` | POSIX-compatible CLI flag library (used by viper) |

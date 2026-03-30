@@ -39,8 +39,9 @@ package gamepad
 import (
 	"bufio"
 	"encoding/hex"
+	"fmt"
 	"io"
-	"log"
+	"log/slog"
 	"os"
 	"strconv"
 	"strings"
@@ -376,7 +377,7 @@ func LoadSDLMappingsFromReader(r io.Reader, platform string) (map[deviceKey]*SDL
 
 		m := parseMappingFields(line)
 		if m == nil {
-			log.Printf("sdldb: failed to parse line %d: %.80s...", lineNum, line)
+			slog.Warn("sdldb: failed to parse line", "line", lineNum, "content", fmt.Sprintf("%.80s...", line))
 			continue
 		}
 		if m.VendorID == 0 && m.ProductID == 0 {
@@ -391,6 +392,6 @@ func LoadSDLMappingsFromReader(r io.Reader, platform string) (map[deviceKey]*SDL
 	if err := scanner.Err(); err != nil {
 		return result, err
 	}
-	log.Printf("sdldb: loaded %d mappings for platform %q", loaded, platform)
+	slog.Info("sdldb: loaded mappings", "count", loaded, "platform", platform)
 	return result, nil
 }

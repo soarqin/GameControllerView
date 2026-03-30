@@ -4,9 +4,10 @@ import (
 	"bytes"
 	"compress/gzip"
 	"embed"
+	"fmt"
 	"io"
 	"io/fs"
-	"log"
+	"os"
 	"path"
 	"strings"
 	"testing/fstest"
@@ -94,7 +95,7 @@ func buildMinifiedFS() (fs.FS, map[string][]byte) {
 		if shouldMinify {
 			minified, merr := m.String(mediaType, string(raw))
 			if merr != nil {
-				log.Printf("web: minify %s: %v (using original)", key, merr)
+				fmt.Fprintf(os.Stderr, "web: minify %s: %v (using original)\n", key, merr)
 				content = raw
 			} else {
 				content = []byte(minified)
@@ -114,13 +115,13 @@ func buildMinifiedFS() (fs.FS, map[string][]byte) {
 			var buf bytes.Buffer
 			w, werr := gzip.NewWriterLevel(&buf, gzip.BestCompression)
 			if werr != nil {
-				log.Printf("web: gzip init %s: %v", key, werr)
+				fmt.Fprintf(os.Stderr, "web: gzip init %s: %v\n", key, werr)
 			} else {
 				if _, werr = io.Copy(w, bytes.NewReader(content)); werr == nil {
 					werr = w.Close()
 				}
 				if werr != nil {
-					log.Printf("web: gzip compress %s: %v", key, werr)
+					fmt.Fprintf(os.Stderr, "web: gzip compress %s: %v\n", key, werr)
 				} else {
 					gz[key] = buf.Bytes()
 				}
@@ -131,8 +132,14 @@ func buildMinifiedFS() (fs.FS, map[string][]byte) {
 	})
 
 	if err != nil {
-		// This should never happen with a valid embed.FS; panic so the bug is visible.
-		panic("web: failed to build minified filesystem: " + err.Error())
+		fmt.Fprintf(os.Stderr, "web: minification failed (%v), serving unminified files\n", err)
+		// Fall back to raw embedded files (not minified, not gzipped)
+		sub, subErr := fs.Sub(frontendFiles, "frontend")
+		if subErr != nil {
+			fmt.Fprintf(os.Stderr, "web: FATAL: cannot sub embedded files: %v\n", subErr)
+			os.Exit(1)
+		}
+		return sub, make(map[string][]byte)
 	}
 
 	// Log size summary for the most important files.
@@ -168,8 +175,8 @@ func logSizes(mapFS fstest.MapFS, gz map[string][]byte) {
 		totalMin += min
 		totalGz += gz
 		if orig > 0 && orig != min {
-			log.Printf("web: %-40s  orig=%5d  min=%5d  gz=%5d bytes", key, orig, min, gz)
+			fmt.Fprintf(os.Stderr, "web: %-40s  orig=%5d  min=%5d  gz=%5d bytes\n", key, orig, min, gz)
 		}
 	}
-	log.Printf("web: total frontend  orig=%d  min=%d  gz=%d bytes", totalOrig, totalMin, totalGz)
+	fmt.Fprintf(os.Stderr, "web: total frontend  orig=%d  min=%d  gz=%d bytes\n", totalOrig, totalMin, totalGz)
 }

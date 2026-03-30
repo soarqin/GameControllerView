@@ -2,7 +2,7 @@ package hub
 
 import (
 	"encoding/json"
-	"log"
+	"log/slog"
 	"sync/atomic"
 
 	"github.com/lxzan/gws"
@@ -58,7 +58,7 @@ func (c *Client) Send(data []byte) {
 func (c *Client) HandleMessage(reader PlayerSwitcher, kmProvider KMStateProvider, sensSetter MouseSensitivitySetter, message []byte) {
 	var clientMsg ClientMessage
 	if err := json.Unmarshal(message, &clientMsg); err != nil {
-		log.Printf("Error parsing client message: %v", err)
+		slog.Error("error parsing client message", "error", err)
 		return
 	}
 
@@ -69,24 +69,24 @@ func (c *Client) HandleMessage(reader PlayerSwitcher, kmProvider KMStateProvider
 			msg := NewPlayerSelectedMessage(clientMsg.PlayerIndex)
 			data, err := json.Marshal(msg)
 			if err != nil {
-				log.Printf("Error marshaling player_selected message: %v", err)
+				slog.Error("error marshaling player_selected message", "error", err)
 				return
 			}
 			c.Send(data)
-			log.Printf("Client switched to player %d", clientMsg.PlayerIndex)
+			slog.Info("client switched player", "player", clientMsg.PlayerIndex)
 		} else {
-			log.Printf("Failed to switch to player %d: invalid index", clientMsg.PlayerIndex)
+			slog.Warn("failed to switch player: invalid index", "player", clientMsg.PlayerIndex)
 		}
 	case "subscribe_km":
 		c.wantsKeyMouse.Store(1)
-		log.Printf("Client subscribed to keyboard/mouse events")
+		slog.Info("client subscribed to keyboard/mouse events")
 		if kmProvider != nil {
 			kmProvider.SendInitialKMState(c)
 		}
 	case "set_mouse_sens":
 		if sensSetter != nil && clientMsg.Value > 0 {
 			sensSetter.SetMouseSensitivity(float32(clientMsg.Value))
-			log.Printf("Mouse sensitivity set to %.1f", clientMsg.Value)
+			slog.Info("mouse sensitivity set", "value", clientMsg.Value)
 		}
 	}
 }

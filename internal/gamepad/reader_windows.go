@@ -5,16 +5,14 @@ package gamepad
 import (
 	"context"
 	"fmt"
-	"log"
+	"log/slog"
 	"time"
 
 	"github.com/soar/inputview/internal/rawinput"
 )
 
 const (
-	deadzone   = 0.05
-	pollDelay  = 16 * time.Millisecond // ~60 Hz
-	triggerMax = 255.0                 // XINPUT trigger range: 0-255
+	triggerMax = 255.0 // XINPUT trigger range: 0-255
 )
 
 // HID usage page / usage IDs for gamepad registration (mirrors rawinput constants).
@@ -27,16 +25,20 @@ const (
 // Run initialises XInput, registers HID callbacks, and runs the polling loop
 // until ctx is cancelled. XInput is thread-safe and does not require LockOSThread.
 func (r *Reader) Run(ctx context.Context) {
+	xinputAvailable := true
 	if err := procXInputGetState.Find(); err != nil {
-		log.Fatalf("gamepad: XInput not available: %v", err)
+		slog.Warn("XInput unavailable, running HID-only mode", "error", err)
+		xinputAvailable = false
 	}
-	log.Println("XInput initialised")
 
-	// Initial scan for already-connected XInput controllers.
-	for i := uint32(0); i < xinputMaxControllers; i++ {
-		var state xinputState
-		if xiGetStateEx(i, &state) == errorSuccess {
-			r.connectXInput(i)
+	if xinputAvailable {
+		slog.Info("XInput initialised")
+		// Initial scan for already-connected XInput controllers.
+		for i := uint32(0); i < xinputMaxControllers; i++ {
+			var state xinputState
+			if xiGetStateEx(i, &state) == errorSuccess {
+				r.connectXInput(i)
+			}
 		}
 	}
 
@@ -54,8 +56,10 @@ func (r *Reader) Run(ctx context.Context) {
 		default:
 		}
 
-		r.pollAllXInput()
-		time.Sleep(pollDelay)
+		if xinputAvailable {
+			r.pollAllXInput()
+		}
+		time.Sleep(r.pollDelay)
 	}
 }
 
@@ -133,7 +137,7 @@ func (r *Reader) updateXInputState(userIndex uint32, state *xinputState) {
 		return
 	}
 
-	newState := convertXInputState(state, info)
+	newState := convertXInputState(state, info, r.deadzone)
 	newState.PlayerIndex = r.GetPlayerIndex()
 
 	r.mu.Lock()
@@ -149,7 +153,8 @@ func (r *Reader) updateXInputState(userIndex uint32, state *xinputState) {
 }
 
 // convertXInputState converts a raw xinputState to a GamepadState.
-func convertXInputState(xs *xinputState, info *joystickInfo) GamepadState {
+// dz is the deadzone threshold to apply to analog inputs.
+func convertXInputState(xs *xinputState, info *joystickInfo, dz float64) GamepadState {
 	gp := xs.Gamepad
 	mapping := info.mapping
 
@@ -162,14 +167,14 @@ func convertXInputState(xs *xinputState, info *joystickInfo) GamepadState {
 	// Triggers: uint8 (0-255) → float64 (0.0-1.0)
 	ltRaw := float64(gp.LeftTrigger) / triggerMax
 	rtRaw := float64(gp.RightTrigger) / triggerMax
-	state.Triggers.LT.Value = applyDeadzone(ltRaw, deadzone)
-	state.Triggers.RT.Value = applyDeadzone(rtRaw, deadzone)
+	state.Triggers.LT.Value = applyDeadzone(ltRaw, dz)
+	state.Triggers.RT.Value = applyDeadzone(rtRaw, dz)
 
 	// Sticks: int16 → float64 (-1.0 to 1.0)
-	lx := applyDeadzone(normalizeAxis(gp.ThumbLX), deadzone)
-	ly := applyDeadzone(normalizeAxis(gp.ThumbLY), deadzone)
-	rx := applyDeadzone(normalizeAxis(gp.ThumbRX), deadzone)
-	ry := applyDeadzone(normalizeAxis(gp.ThumbRY), deadzone)
+	lx := applyDeadzone(normalizeAxis(gp.ThumbLX), dz)
+	ly := applyDeadzone(normalizeAxis(gp.ThumbLY), dz)
+	rx := applyDeadzone(normalizeAxis(gp.ThumbRX), dz)
+	ry := applyDeadzone(normalizeAxis(gp.ThumbRY), dz)
 
 	// XInput Y axes are positive-up. The frontend canvas rendering inverts Y
 	// (knobY = s.y - position.y * maxTravel), so we pass the raw value unchanged.
@@ -249,7 +254,7 @@ func (r *Reader) handleHIDInput(hDevice uintptr, rawData []byte, reportSize uint
 		return
 	}
 
-	newState := parseHIDReport(dev, rawData)
+	newState := parseHIDReport(dev, rawData, r.deadzone)
 	newState.PlayerIndex = r.GetPlayerIndex()
 
 	r.mu.Lock()
@@ -341,6 +346,9 @@ func (r *Reader) registerJoystick(key joystickKey, info *joystickInfo) {
 
 	// Set as active if no active controller yet (check under same lock).
 	becameActive := false
+	slog.Info("gamepad connected", "player", playerIndex, "name", info.name, "source", info.sourceType, "mapping", info.mapping.Name)
+
+	// Set as active if no active controller yet.
 	if !r.hasActive {
 		r.activeKey = key
 		r.hasActive = true
@@ -352,11 +360,8 @@ func (r *Reader) registerJoystick(key joystickKey, info *joystickInfo) {
 	}
 	r.mu.Unlock()
 
-	log.Printf("Gamepad connected: Player %d - %s (%s) mapping=%s",
-		playerIndex, info.name, info.sourceType, info.mapping.Name)
-
 	if becameActive {
-		log.Printf("Active controller set to player %d: %s", playerIndex, info.name)
+		slog.Info("active controller set", "player", playerIndex, "name", info.name)
 		r.emitState()
 	}
 }
@@ -371,7 +376,7 @@ func (r *Reader) disconnectJoystick(key joystickKey) {
 		return
 	}
 	playerIndex := r.getPlayerIndexLocked(key)
-	log.Printf("Gamepad disconnected: Player %d - %s (%s)", playerIndex, info.name, info.sourceType)
+	slog.Info("gamepad disconnected", "player", playerIndex, "name", info.name, "source", info.sourceType)
 
 	delete(r.joysticks, key)
 	newOrder := make([]joystickKey, 0, len(r.joystickOrder))
@@ -410,7 +415,7 @@ func (r *Reader) disconnectJoystick(key joystickKey) {
 	r.state.PlayerIndex = nextPlayer
 	r.mu.Unlock()
 
-	log.Printf("Active controller promoted to player %d: %s", nextPlayer, nextInfo.name)
+	slog.Info("active controller promoted", "player", nextPlayer, "name", nextInfo.name)
 	r.emitState()
 }
 

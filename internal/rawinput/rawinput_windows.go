@@ -11,7 +11,8 @@ package rawinput
 
 import (
 	"context"
-	"log"
+	"fmt"
+	"log/slog"
 	"runtime"
 	"sync"
 	"syscall"
@@ -308,7 +309,7 @@ func (r *Reader) Run(ctx context.Context) {
 
 	hwnd, err := r.createMessageWindow()
 	if err != nil {
-		log.Printf("rawinput: failed to create message window: %v", err)
+		slog.Error("rawinput: failed to create message window", "error", err)
 		close(r.hwndReady)
 		close(r.changes)
 		return
@@ -317,10 +318,10 @@ func (r *Reader) Run(ctx context.Context) {
 	close(r.hwndReady) // signal that HWND is valid
 
 	if err := r.registerDevices(hwnd); err != nil {
-		log.Printf("rawinput: failed to register raw input devices: %v", err)
+		slog.Warn("rawinput: failed to register raw input devices", "error", err)
 		// Continue anyway — partial functionality is better than none
 	} else {
-		log.Printf("rawinput: registered keyboard+mouse with RIDEV_INPUTSINK on hwnd=0x%x", hwnd)
+		slog.Info("rawinput: registered keyboard+mouse", "hwnd", fmt.Sprintf("0x%x", hwnd))
 	}
 
 	// Register any HID callbacks that were added before Run() started.
@@ -342,9 +343,9 @@ func (r *Reader) Run(ctx context.Context) {
 			uintptr(unsafe.Sizeof(rawInputDevice{})),
 		)
 		if ret == 0 {
-			log.Printf("rawinput: failed to register HID usagePage=0x%02x usage=0x%02x: %v", cb.usagePage, cb.usage, regErr)
+			slog.Warn("rawinput: failed to register HID device", "usagePage", fmt.Sprintf("0x%02x", cb.usagePage), "usage", fmt.Sprintf("0x%02x", cb.usage), "error", regErr)
 		} else {
-			log.Printf("rawinput: registered HID usagePage=0x%02x usage=0x%02x with RIDEV_INPUTSINK|RIDEV_DEVNOTIFY", cb.usagePage, cb.usage)
+			slog.Info("rawinput: registered HID device", "usagePage", fmt.Sprintf("0x%02x", cb.usagePage), "usage", fmt.Sprintf("0x%02x", cb.usage))
 		}
 	}
 

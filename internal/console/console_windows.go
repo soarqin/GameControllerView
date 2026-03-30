@@ -7,7 +7,7 @@
 package console
 
 import (
-	"log"
+	"log/slog"
 	"os"
 	"strings"
 	"sync/atomic"
@@ -140,9 +140,6 @@ func redirectStdStreams() {
 		os.Stdin = os.NewFile(uintptr(nStdin), "/dev/stdin")
 	}
 
-	// Also update log package's default output if it's already configured
-	// (Note: this doesn't affect custom log writers)
-	log.SetOutput(os.Stderr)
 }
 
 // isLaunchedFromExplorer checks if the parent process is explorer.exe
@@ -289,7 +286,7 @@ func SetupConsoleHandler(shutdownChan chan struct{}) func() {
 			1, // TRUE = add handler
 		)
 		if ret == 0 {
-			log.Printf("Warning: Failed to set Windows console control handler")
+			slog.Warn("failed to set Windows console control handler")
 		}
 	}
 

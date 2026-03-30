@@ -2,7 +2,7 @@ package hub
 
 import (
 	"encoding/json"
-	"log"
+	"log/slog"
 	"sync"
 	"time"
 
@@ -129,7 +129,7 @@ func (b *Broadcaster) SendInitialState(c *Client) {
 	msg := NewFullMessage(seq, &stateCopy)
 	data, err := json.Marshal(msg)
 	if err != nil {
-		log.Printf("Error marshaling initial state: %v", err)
+		slog.Error("error marshaling initial state", "error", err)
 		return
 	}
 	c.Send(data)
@@ -156,7 +156,7 @@ func (b *Broadcaster) SendInitialKMState(c *Client) {
 	msg := NewKMFullMessage(seq, &kmCopy)
 	data, err := json.Marshal(msg)
 	if err != nil {
-		log.Printf("Error marshaling initial km state: %v", err)
+		slog.Error("error marshaling initial km state", "error", err)
 		return
 	}
 	c.Send(data)
@@ -168,7 +168,7 @@ func (b *Broadcaster) broadcastFull(seq int64, state gamepad.GamepadState, playe
 	msg := NewFullMessage(seq, &state)
 	data, err := json.Marshal(msg)
 	if err != nil {
-		log.Printf("Error marshaling full message: %v", err)
+		slog.Error("error marshaling full message", "error", err)
 		return
 	}
 	b.hub.BroadcastToPlayer(data, playerIndex)
@@ -179,7 +179,7 @@ func (b *Broadcaster) broadcastDelta(seq int64, delta *gamepad.DeltaChanges, pla
 	msg := NewDeltaMessage(seq, delta)
 	data, err := json.Marshal(msg)
 	if err != nil {
-		log.Printf("Error marshaling delta message: %v", err)
+		slog.Error("error marshaling delta message", "error", err)
 		return
 	}
 	b.hub.BroadcastToPlayer(data, playerIndex)
@@ -190,7 +190,7 @@ func (b *Broadcaster) broadcastKMDelta(seq int64, delta *input.KeyMouseDelta) {
 	msg := NewKMDeltaMessage(seq, delta)
 	data, err := json.Marshal(msg)
 	if err != nil {
-		log.Printf("Error marshaling km delta message: %v", err)
+		slog.Error("error marshaling km delta message", "error", err)
 		return
 	}
 	b.hub.BroadcastKeyMouse(data)

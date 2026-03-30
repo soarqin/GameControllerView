@@ -1,7 +1,7 @@
 package server
 
 import (
-	"log"
+	"log/slog"
 	"net/http"
 
 	"github.com/lxzan/gws"
@@ -68,7 +68,7 @@ func handleWebSocket(h *hub.Hub, b *hub.Broadcaster, reader *gamepad.Reader, sen
 	return func(w http.ResponseWriter, r *http.Request) {
 		socket, err := upgrader.Upgrade(w, r)
 		if err != nil {
-			log.Printf("WebSocket upgrade failed: %v", err)
+			slog.Error("WebSocket upgrade failed", "error", err)
 			return
 		}
 		// ReadLoop drives the event loop (OnOpen, OnMessage, OnClose).

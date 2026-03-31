@@ -232,6 +232,11 @@ type hidDeviceInfo struct {
 
 	// Button count (max usage in button caps range)
 	buttonCount uint16
+
+	// expectedReportIDs is the set of HID input report IDs that contain
+	// valid gamepad data (derived from value caps and button caps during init).
+	// If nil, the device does not use report IDs and all reports are valid.
+	expectedReportIDs map[uint8]struct{}
 }
 
 // ---------------------------------------------------------------------------
@@ -362,6 +367,13 @@ func initHIDDevice(hDevice uintptr) *hidDeviceInfo {
 		}
 	}
 
+	// Build the set of expected input report IDs from value caps and button caps.
+	// HID devices that use report IDs (first byte of report = ID) may send
+	// non-input reports (feature responses, subcommand replies) that have
+	// different layouts. Parsing these as input produces garbage zero-state
+	// and causes button/axis values to "jump" erratically.
+	dev.expectedReportIDs = buildExpectedReportIDs(dev.valueCaps, dev.buttonCaps)
+
 	// Build ordered axis list (SDL axis index → HID usage).
 	dev.axisOrder = buildAxisOrder(dev.valueCaps)
 
@@ -413,10 +425,40 @@ func buildAxisOrder(valueCaps []hidpValueCaps) []hidAxisEntry {
 }
 
 // ---------------------------------------------------------------------------
+// buildExpectedReportIDs — determine which report IDs carry input data
+// ---------------------------------------------------------------------------
+
+// buildExpectedReportIDs collects the set of HID report IDs that are described
+// by the input value caps and button caps. Returns nil if the device does not
+// use report IDs (all caps have ReportID 0), meaning all reports are valid input.
+func buildExpectedReportIDs(valueCaps []hidpValueCaps, buttonCaps []hidpButtonCaps) map[uint8]struct{} {
+	hasNonZero := false
+	ids := make(map[uint8]struct{})
+	for _, vc := range valueCaps {
+		if vc.ReportID != 0 {
+			hasNonZero = true
+		}
+		ids[vc.ReportID] = struct{}{}
+	}
+	for _, bc := range buttonCaps {
+		if bc.ReportID != 0 {
+			hasNonZero = true
+		}
+		ids[bc.ReportID] = struct{}{}
+	}
+	if !hasNonZero {
+		return nil // no report IDs in use — all reports are valid
+	}
+	return ids
+}
+
+// ---------------------------------------------------------------------------
 // parseHIDReport — top-level dispatcher
 // ---------------------------------------------------------------------------
 
-func parseHIDReport(dev *hidDeviceInfo, rawData []byte, dz float64) GamepadState {
+// parseHIDReport parses a single HID input report into a GamepadState.
+// Returns (state, false) if the report should be skipped (incompatible report ID).
+func parseHIDReport(dev *hidDeviceInfo, rawData []byte, dz float64) (GamepadState, bool) {
 	controllerType := dev.mapping.Name
 	if dev.sdlMap != nil {
 		controllerType = sdlNameToControllerType(dev.sdlMap.Name)
@@ -425,6 +467,22 @@ func parseHIDReport(dev *hidDeviceInfo, rawData []byte, dz float64) GamepadState
 		Connected:      true,
 		ControllerType: controllerType,
 		Name:           dev.name,
+	}
+
+	if len(rawData) == 0 {
+		return state, false
+	}
+
+	// Check if this report's ID matches any known input report ID.
+	// HID devices (e.g. Switch Pro Controller) may send non-input reports
+	// (subcommand responses, feature reports) whose layout doesn't match the
+	// input caps. Parsing them produces an all-zero GamepadState that alternates
+	// with the real state, causing buttons/axes to "jump" erratically.
+	if dev.expectedReportIDs != nil {
+		reportID := rawData[0]
+		if _, ok := dev.expectedReportIDs[reportID]; !ok {
+			return state, false
+		}
 	}
 
 	ppd := uintptr(unsafe.Pointer(&dev.preparsedData[0]))
@@ -440,7 +498,7 @@ func parseHIDReport(dev *hidDeviceInfo, rawData []byte, dz float64) GamepadState
 		parseHIDReportLegacy(dev, &state, ppd, reportPtr, reportLen, pressedButtons, dz)
 	}
 
-	return state
+	return state, true
 }
 
 // ---------------------------------------------------------------------------

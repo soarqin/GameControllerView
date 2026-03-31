@@ -119,6 +119,45 @@ var xboxMapping = &DeviceMapping{
 	HasHat: true,
 }
 
+// HID axis mapping for Nintendo Switch Pro Controller.
+// Switch Pro HID report: X=left_x, Y=left_y, Z=right_x, Rz=right_y.
+// No analog triggers — ZL/ZR are digital-only buttons in the HID report.
+var switchProHIDAxes = map[uint16]string{
+	hidUsageX:  "left_x",
+	hidUsageY:  "left_y",
+	hidUsageZ:  "right_x",
+	hidUsageRz: "right_y",
+}
+
+// HID button mapping for Switch Pro (1-based usage index).
+// Switch Pro HID button order: Y(1) B(2) A(3) X(4) L(5) R(6) ZL(7) ZR(8)
+// -(9) +(10) LS(11) RS(12) Home(13) Capture(14)
+var switchProHIDButtons = map[uint16]string{
+	1:  "y",
+	2:  "b",
+	3:  "a",
+	4:  "x",
+	5:  "lb",
+	6:  "rb",
+	7:  "lt",    // ZL (digital)
+	8:  "rt",    // ZR (digital)
+	9:  "back",  // -
+	10: "start", // +
+	11: "ls",
+	12: "rs",
+	13: "guide",   // Home
+	14: "capture", // Capture
+}
+
+// switchProMapping is the device mapping for Nintendo Switch Pro Controllers.
+// Used for both XInput (Name only) and HID fallback (HIDAxes + HIDButtons).
+var switchProMapping = &DeviceMapping{
+	Name:       "switch_pro",
+	HasHat:     true,
+	HIDAxes:    switchProHIDAxes,
+	HIDButtons: switchProHIDButtons,
+}
+
 var playstationMapping = newPlayStationMapping("playstation", playStationHIDButtons)
 
 var playstation5Mapping = newPlayStationMapping("playstation", playStation5HIDButtons, ButtonMapping{Index: 11, Target: "touchpad"})
@@ -614,9 +653,9 @@ var knownDevices = map[deviceKey]*DeviceMapping{
 	{0x358a, 0x0104}: playstation5Mapping,
 
 	// Nintendo Switch Pro Controller
-	{0x057e, 0x2009}: xboxMapping,
-	{0x057e, 0x2069}: xboxMapping,
-	{0x0f0d, 0x00f6}: xboxMapping,
-	{0x0e6f, 0x0186}: xboxMapping,
-	{0x0e6f, 0x018c}: xboxMapping,
+	{0x057e, 0x2009}: switchProMapping,
+	{0x057e, 0x2069}: switchProMapping,
+	{0x0f0d, 0x00f6}: switchProMapping,
+	{0x0e6f, 0x0186}: switchProMapping,
+	{0x0e6f, 0x018c}: switchProMapping,
 }

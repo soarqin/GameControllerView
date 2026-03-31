@@ -117,16 +117,25 @@ type Reader struct {
 	// device that has already been removed.
 	// Only accessed under r.mu.
 	disconnectedHIDs map[uintptr]struct{}
+
+	// xinputVIDPIDs tracks VID/PID pairs of currently connected XInput devices.
+	// Used to suppress duplicate HID registrations when XInput emulation software
+	// (e.g. Steam, BetterJoy) creates a virtual XInput device for the same
+	// physical controller — the raw HID interface lacks the "IG_" marker in its
+	// device name, so isXInputDevice() cannot filter it.
+	// Only accessed under r.mu.
+	xinputVIDPIDs map[deviceKey]int
 }
 
 // joystickInfo holds per-device metadata for a connected controller.
 type joystickInfo struct {
 	mapping    *DeviceMapping
 	name       string
-	vidPID     string  // "VID_XXXX&PID_XXXX" for logging; empty if unavailable
-	sourceType string  // "xinput" or "hid"
-	xinputSlot uint32  // XInput slot (0-3); only valid when sourceType=="xinput"
-	hDevice    uintptr // HID device handle; only valid when sourceType=="hid"
+	vidPID     string    // "VID_XXXX&PID_XXXX" for logging; empty if unavailable
+	sourceType string    // "xinput" or "hid"
+	xinputSlot uint32    // XInput slot (0-3); only valid when sourceType=="xinput"
+	hDevice    uintptr   // HID device handle; only valid when sourceType=="hid"
+	devKey     deviceKey // VID/PID pair; zero if unavailable
 }
 
 // NewReader creates a new Reader with default deadzone and poll rate.
@@ -135,6 +144,7 @@ func NewReader() *Reader {
 		joysticks:        make(map[joystickKey]*joystickInfo),
 		hidDevices:       make(map[uintptr]*hidDeviceInfo),
 		disconnectedHIDs: make(map[uintptr]struct{}),
+		xinputVIDPIDs:    make(map[deviceKey]int),
 		changes:          make(chan GamepadState, 64),
 		deadzone:         0.05,
 		pollDelay:        16 * time.Millisecond,

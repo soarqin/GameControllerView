@@ -111,6 +111,11 @@ func (r *Reader) connectXInput(userIndex uint32) {
 	if hasPID {
 		mapping = GetMapping(vid, pid)
 		vidPID = fmt.Sprintf("VID_%04X&PID_%04X", vid, pid)
+		// Record the VID/PID so that duplicate HID registrations for the same
+		// physical device can be suppressed (e.g. Switch Pro via Steam XInput).
+		r.mu.Lock()
+		r.xinputVIDPIDs[deviceKey{VendorID: vid, ProductID: pid}]++
+		r.mu.Unlock()
 	}
 	name := buildControllerName(mapping.Name, vidPID)
 
@@ -120,6 +125,7 @@ func (r *Reader) connectXInput(userIndex uint32) {
 		vidPID:     vidPID,
 		sourceType: "xinput",
 		xinputSlot: userIndex,
+		devKey:     deviceKey{VendorID: vid, ProductID: pid},
 	}
 	key := xinputKey(userIndex)
 	r.registerJoystick(key, info)
@@ -241,6 +247,7 @@ func (r *Reader) handleHIDInput(hDevice uintptr, rawData []byte, reportSize uint
 			vidPID:     fmt.Sprintf("VID_%04X&PID_%04X", dev.vendorID, dev.productID),
 			sourceType: "hid",
 			hDevice:    hDevice,
+			devKey:     deviceKey{VendorID: dev.vendorID, ProductID: dev.productID},
 		}
 		r.mu.Unlock()
 		r.registerJoystick(key, info)
@@ -254,7 +261,16 @@ func (r *Reader) handleHIDInput(hDevice uintptr, rawData []byte, reportSize uint
 		return
 	}
 
-	newState := parseHIDReport(dev, rawData, r.deadzone)
+	// If multiple HID reports are batched in a single WM_INPUT message
+	// (dwCount > 1), use only the last report (most recent data).
+	if reportSize > 0 && uint32(len(rawData)) > reportSize {
+		rawData = rawData[uint32(len(rawData))-reportSize:]
+	}
+
+	newState, ok := parseHIDReport(dev, rawData, r.deadzone)
+	if !ok {
+		return // incompatible report ID (non-input report); skip
+	}
 	newState.PlayerIndex = r.GetPlayerIndex()
 
 	r.mu.Lock()
@@ -289,6 +305,7 @@ func (r *Reader) handleHIDDeviceChange(added bool, hDevice uintptr) {
 			vidPID:     fmt.Sprintf("VID_%04X&PID_%04X", dev.vendorID, dev.productID),
 			sourceType: "hid",
 			hDevice:    hDevice,
+			devKey:     deviceKey{VendorID: dev.vendorID, ProductID: dev.productID},
 		}
 		r.mu.Unlock()
 		r.registerJoystick(key, info)
@@ -315,6 +332,20 @@ func (r *Reader) getOrInitHIDDevice(hDevice uintptr) *hidDeviceInfo {
 	dev := initHIDDevice(hDevice)
 	r.mu.Lock()
 	if dev != nil {
+		// Suppress HID devices whose VID/PID matches a currently connected
+		// XInput device. XInput emulation software (Steam, BetterJoy) creates
+		// a virtual XInput device for controllers like Switch Pro, but the
+		// raw HID interface remains visible and lacks the "IG_" marker that
+		// isXInputDevice() checks. Without this guard, both XInput and HID
+		// paths would read the same physical controller, and the different
+		// interpretations cause button states to alternate ("jump").
+		if !dev.isXInput && !dev.isInvalid {
+			dk := deviceKey{VendorID: dev.vendorID, ProductID: dev.productID}
+			if r.xinputVIDPIDs[dk] > 0 {
+				slog.Info("hidinput: suppressing HID device (XInput duplicate)", "device", dev.name)
+				dev.isXInput = true
+			}
+		}
 		r.hidDevices[hDevice] = dev
 	}
 	return dev
@@ -377,6 +408,16 @@ func (r *Reader) disconnectJoystick(key joystickKey) {
 	}
 	playerIndex := r.getPlayerIndexLocked(key)
 	slog.Info("gamepad disconnected", "player", playerIndex, "name", info.name, "source", info.sourceType)
+
+	// Decrement XInput VID/PID tracking count so that HID devices with the
+	// same VID/PID can be registered again after the XInput device is gone.
+	if info.sourceType == "xinput" && info.devKey != (deviceKey{}) {
+		if cnt := r.xinputVIDPIDs[info.devKey]; cnt <= 1 {
+			delete(r.xinputVIDPIDs, info.devKey)
+		} else {
+			r.xinputVIDPIDs[info.devKey] = cnt - 1
+		}
+	}
 
 	delete(r.joysticks, key)
 	newOrder := make([]joystickKey, 0, len(r.joystickOrder))

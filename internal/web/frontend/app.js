@@ -350,7 +350,7 @@ const IO_BUTTON_CODE_MAP = {
     12: s => s.dpad.down,
     13: s => s.dpad.left,
     14: s => s.dpad.right,
-    15: s => s.buttons.misc,
+    15: s => s.buttons.capture,
     20: s => s.buttons.touchpad,
 };
 
@@ -435,24 +435,31 @@ function loadInputOverlayConfig(name) {
             if (cfg.elements) {
                 cfg.elements.sort((a, b) => (Number(a.z_level) || 0) - (Number(b.z_level) || 0));
             }
-            const img = new Image();
-            img.onload = () => {
-                overlayTexture = img;
+            const onTextureLoaded = (loadedImg, src) => {
+                overlayTexture = loadedImg;
                 overlayReady = true;
                 dirty = true;
-                console.log(`Input Overlay '${name}' loaded (${cfg.overlay_width}x${cfg.overlay_height})`);
+                console.log(`Input Overlay '${name}' loaded from ${src} (${cfg.overlay_width}x${cfg.overlay_height})`);
             };
-            img.onerror = () => {
+            const onAllFailed = () => {
                 overlayLoadFailed = true;
                 dirty = true;
-                console.error('Failed to load overlay texture:', pngUrl);
-                // Do NOT set overlayReady — render loop will stay idle.
-                // Show error in the status bar so the user knows what went wrong.
+                console.error('Failed to load overlay texture (tried PNG and SVG):', pngUrl);
                 const statusEl = document.getElementById('status');
                 if (statusEl) {
-                    statusEl.textContent = `Error: failed to load texture ${dirName}.png`;
+                    statusEl.textContent = `Error: failed to load texture ${dirName}`;
                     statusEl.style.display = '';
                 }
+            };
+            const img = new Image();
+            img.onload = () => onTextureLoaded(img, pngUrl);
+            img.onerror = () => {
+                // PNG failed — try SVG fallback
+                const svgUrl = `${baseUrl}${encodeURIComponent(dirName)}.svg`;
+                const svgImg = new Image();
+                svgImg.onload = () => onTextureLoaded(svgImg, svgUrl);
+                svgImg.onerror = onAllFailed;
+                svgImg.src = svgUrl;
             };
             img.src = pngUrl;
         })

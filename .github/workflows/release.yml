@@ -96,6 +96,7 @@ jobs:
             "README.zhCN.md",
             "LICENSE",
             "InputView.exe",
+            "inputview.example.toml",
             "gpvskin2overlay.exe",
             "docs"
           ) -DestinationPath $archiveName

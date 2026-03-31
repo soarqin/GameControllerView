@@ -275,13 +275,18 @@ Non-XInput HID gamepads (PS4/PS5/Switch Pro/generic) are captured via the **same
 
 **Disconnected HID handle blocklist**: `gamepad.Reader` maintains a `disconnectedHIDs` set (map[uintptr]struct{}). When `handleHIDDeviceChange` receives `GIDC_REMOVAL`, the handle is added to this set. `handleHIDInput` checks the set before processing any WM_INPUT event and discards residual events for disconnected handles. The handle is removed from the set on the next `GIDC_ARRIVAL` for the same handle value, allowing re-connection to work correctly.
 
-**XInput filtering**: XInput creates a virtual HID device for each Xbox controller. These are identified by `IG_` in the device name (from `GetRawInputDeviceInfoW(RIDI_DEVICENAME)`). `isXInputDevice()` in `hidinput_windows.go` checks for this prefix — matching devices are skipped in the HID path to prevent double-reporting.
+**XInput filtering**: XInput creates a virtual HID device for each Xbox controller. These are identified by `IG_` in the device name (from `GetRawInputDeviceInfoW(RIDI_DEVICENAME)`). `isXInputDevice()` in `hidinput_windows.go` checks for this prefix — matching devices are skipped in the HID path to prevent double-reporting. Additionally, `Reader.xinputVIDPIDs` tracks VID/PID pairs of connected XInput devices; `getOrInitHIDDevice()` checks this set and suppresses HID devices whose VID/PID matches an active XInput device. This handles controllers like Switch Pro where XInput emulation software (Steam, BetterJoy) creates a virtual XInput device but the raw HID interface lacks the `IG_` marker.
+
+**Report ID validation**: HID devices may send reports with multiple report IDs (input reports, feature responses, subcommand replies). Only reports whose ID matches the input value/button caps are valid input data. `hidDeviceInfo.expectedReportIDs` (computed during `initHIDDevice()` via `buildExpectedReportIDs()`) stores the set of valid input report IDs. `parseHIDReport()` checks the first byte of the raw data against this set and returns `(state, false)` for incompatible reports, preventing the caller from emitting a zero-state `GamepadState` that would cause button/axis values to "jump" between real data and zeros.
+
+**Multi-report batching**: When multiple HID reports arrive in a single `WM_INPUT` message (`dwCount > 1`), `handleHIDInput()` extracts only the last report (`rawData[len-reportSize:]`) for parsing, since it contains the most recent input state. This prevents `HidP_*` functions from reading into adjacent reports' data.
 
 **Report parsing**: On each WM_INPUT for a HID gamepad, `parseHIDReport()` is called:
-1. `HidP_GetUsageValue` — reads each analog axis value using the `valueCaps` list. Each `valueCaps` entry is iterated over its full `[UsageMin, UsageMax]` range (when `IsRange=1`) to handle controllers that pack multiple axes into a single caps entry.
-2. Hat switch (usage 0x39) → mapped to `DpadState` using `hatDirTable` (0=N, 1=NE, … 7=NW, ≥8=center)
-3. `HidP_GetUsages` — returns the list of currently pressed button usages (1-based)
-4. Button usages → `GamepadState` fields via `resolveButtonTarget()` + `applyButton()`
+1. Report ID check — incompatible reports are skipped (returns false)
+2. `HidP_GetUsageValue` — reads each analog axis value using the `valueCaps` list. Each `valueCaps` entry is iterated over its full `[UsageMin, UsageMax]` range (when `IsRange=1`) to handle controllers that pack multiple axes into a single caps entry.
+3. Hat switch (usage 0x39) → mapped to `DpadState` using `hatDirTable` (0=N, 1=NE, … 7=NW, ≥8=center)
+4. `HidP_GetUsages` — returns the list of currently pressed button usages (1-based)
+5. Button usages → `GamepadState` fields via `resolveButtonTarget()` + `applyButton()`
 
 **Preparsed data**: Fetched once per device via `GetRawInputDeviceInfoW(RIDI_PREPARSEDDATA)` and cached in `hidDeviceInfo`. Required for all `HidP_*` calls. Allocation must be at least 8-byte aligned (Go's `make([]byte)` satisfies this on all supported architectures).
 
@@ -295,7 +300,7 @@ Non-XInput HID gamepads (PS4/PS5/Switch Pro/generic) are captured via the **same
 - `HIDAxes map[uint16]string` — maps HID usage codes to semantic axis targets. If nil, `defaultHIDAxes` is used (covers most standard gamepads).
 - `HIDButtons map[uint16]string` — maps 1-based button usage numbers to button target names. If nil, `defaultButtonOrder` is used.
 - PS4/PS5: `playStationHIDAxes` (Z=right_x, Rz=right_y, Rx=lt, Ry=rt) — different from generic default which assigns Z to right trigger.
-- Switch Pro: `switchProHIDAxes` (Z=right_x, Rz=right_y, no analog triggers in HID report).
+- Switch Pro: `switchProHIDAxes` (Z=right_x, Rz=right_y, no analog triggers in HID report). `switchProHIDButtons` remaps face buttons (Y=1, B=2, A=3, X=4 — Nintendo layout differs from default). `switchProMapping` with `Name: "switch_pro"` ensures the frontend loads the correct layout config.
 
 **SDL GameControllerDB mapping path** (takes priority over legacy HID path when available):
 - `LoadSDLDB(externalPath)` in `reader.go` always loads the **embedded** `gamecontrollerdb.txt` (via `go:embed` in `sdldb_embed.go`) as a base, then overlays an external file at `externalPath` if present. External entries take priority, allowing users to place an updated `gamecontrollerdb.txt` next to the executable without recompiling.

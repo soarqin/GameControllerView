@@ -1,8 +1,8 @@
 {
     "name": "Switch Pro Controller",
     "body": {
-        "path": "M82,10 C62,10 48,22 40,40 L25,80 C12,110 8,140 8,165 C8,230 20,280 40,308 C55,325 72,330 90,330 C110,330 128,318 138,300 C155,270 160,240 165,210 L165,180 L335,180 L335,210 C340,240 345,270 362,300 C372,318 390,330 410,330 C428,330 445,325 460,308 C480,280 492,230 492,165 C492,140 488,110 475,80 L460,40 C452,22 438,10 418,10 Z",
-        "viewBox": "0 0 500 340",
+        "path": "M 130,55 C 110,55 92,62 80,78 C 62,100 48,135 40,178 C 28,228 26,260 34,285 C 42,305 58,318 82,324 C 100,328 116,318 128,298 C 142,272 152,245 160,225 L 165,215 L 335,215 L 340,225 C 348,245 358,272 372,298 C 384,318 400,328 418,324 C 442,318 458,305 466,285 C 474,260 472,228 460,178 C 452,135 438,100 420,78 C 408,62 390,55 370,55 Z",
+        "viewBox": "24 50 452 280",
         "x": 10,
         "y": 30,
         "width": 480,
@@ -10,36 +10,36 @@
     },
     "faceButtons": {
         "radius": 18,
-        "a": { "x": 385, "y": 168, "label": { "text": "A", "color": "#E4001B" } },
-        "b": { "x": 417, "y": 136, "label": { "text": "B", "color": "#FFC000" } },
-        "x": { "x": 353, "y": 136, "label": { "text": "X", "color": "#00B4D5" } },
-        "y": { "x": 385, "y": 104, "label": { "text": "Y", "color": "#00A650" } },
+        "a": { "x": 401, "y": 110, "label": { "text": "A", "color": "#E4001B" } },
+        "b": { "x": 369, "y": 142, "label": { "text": "B", "color": "#FFC000" } },
+        "x": { "x": 369, "y": 78, "label": { "text": "X", "color": "#00B4D5" } },
+        "y": { "x": 337, "y": 110, "label": { "text": "Y", "color": "#00A650" } },
         "label": { "fontSize": 16, "fontWeight": "bold" }
     },
     "dpad": {
-        "x": 115,
-        "y": 155,
-        "size": 30,
-        "armWidth": 20
+        "x": 175,
+        "y": 167,
+        "size": 25,
+        "armWidth": 18
     },
     "shoulders": {
-        "lb": { "x": 80, "y": 38, "width": 75, "height": 26, "radius": 8, "label": { "text": "L" } },
-        "rb": { "x": 345, "y": 38, "width": 75, "height": 26, "radius": 8, "label": { "text": "R" } },
+        "lb": { "x": 80, "y": 30, "width": 75, "height": 25, "radius": 8, "label": { "text": "L" } },
+        "rb": { "x": 345, "y": 30, "width": 75, "height": 25, "radius": 8, "label": { "text": "R" } },
         "label": { "fontSize": 15, "fontWeight": "bold" }
     },
     "triggers": {
-        "lt": { "x": 88, "y": 15, "width": 55, "height": 32, "radius": 8, "label": { "text": "ZL" } },
-        "rt": { "x": 357, "y": 15, "width": 55, "height": 32, "radius": 8, "label": { "text": "ZR" } },
+        "lt": { "x": 88, "y": 10, "width": 58, "height": 25, "radius": 8, "label": { "text": "ZL" } },
+        "rt": { "x": 354, "y": 10, "width": 58, "height": 25, "radius": 8, "label": { "text": "ZR" } },
         "label": { "fontSize": 12, "fontWeight": "bold" }
     },
     "sticks": {
-        "left": { "x": 120, "y": 130, "baseRadius": 32, "knobRadius": 18 },
-        "right": { "x": 310, "y": 200, "baseRadius": 32, "knobRadius": 18 }
+        "left": { "x": 131, "y": 110, "baseRadius": 30, "knobRadius": 17 },
+        "right": { "x": 325, "y": 167, "baseRadius": 25, "knobRadius": 14 }
     },
     "centerButtons": {
-        "back": { "x": 185, "y": 125, "width": 38, "height": 18, "radius": 5, "label": { "text": "\u2013", "fontSize": 14, "fontWeight": "bold" } },
-        "start": { "x": 277, "y": 125, "width": 38, "height": 18, "radius": 5, "label": { "text": "+", "fontSize": 14, "fontWeight": "bold" } },
-        "guide": { "x": 250, "y": 95, "radius": 16, "label": { "text": "\u2302", "fontSize": 14 } },
-        "capture": { "x": 185, "y": 155, "width": 18, "height": 18, "radius": 4, "label": { "text": "\u25a0", "fontSize": 10 } }
+        "back": { "x": 197, "y": 86, "width": 36, "height": 16, "radius": 5, "label": { "text": "\u2013", "fontSize": 14, "fontWeight": "bold" } },
+        "start": { "x": 267, "y": 86, "width": 36, "height": 16, "radius": 5, "label": { "text": "+", "fontSize": 14, "fontWeight": "bold" } },
+        "guide": { "x": 275, "y": 128, "radius": 13, "label": { "text": "\u2302", "fontSize": 12 } },
+        "capture": { "x": 225, "y": 128, "radius": 12, "label": { "text": "\u25cb", "fontSize": 12 } }
     }
 }

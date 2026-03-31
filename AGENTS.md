@@ -210,7 +210,7 @@ goroutine: rawinput.Reader.Run(ctx)  ← HWND_MESSAGE window (OS-locked)
    ├── WM_INPUT (HID)       → registered HID callbacks
    │      └── gamepad.Reader.handleHIDInput()  ← runs on the rawinput goroutine
    │             ↓ (non-XInput HID gamepads only)
-   │         parseHIDReport() via hid.dll HidP_* APIs
+   │         parseHIDReport() — Nintendo: custom byte parser; others: hid.dll HidP_* APIs
    │             ↓
    │         GamepadState → chan GamepadState (same channel as XInput)
    └── WM_INPUT_DEVICE_CHANGE → registered device-change callbacks
@@ -282,11 +282,12 @@ Non-XInput HID gamepads (PS4/PS5/Switch Pro/generic) are captured via the **same
 **Multi-report batching**: When multiple HID reports arrive in a single `WM_INPUT` message (`dwCount > 1`), `handleHIDInput()` extracts only the last report (`rawData[len-reportSize:]`) for parsing, since it contains the most recent input state. This prevents `HidP_*` functions from reading into adjacent reports' data.
 
 **Report parsing**: On each WM_INPUT for a HID gamepad, `parseHIDReport()` is called:
-1. Report ID check — incompatible reports are skipped (returns false)
-2. `HidP_GetUsageValue` — reads each analog axis value using the `valueCaps` list. Each `valueCaps` entry is iterated over its full `[UsageMin, UsageMax]` range (when `IsRange=1`) to handle controllers that pack multiple axes into a single caps entry.
-3. Hat switch (usage 0x39) → mapped to `DpadState` using `hatDirTable` (0=N, 1=NE, … 7=NW, ≥8=center)
-4. `HidP_GetUsages` — returns the list of currently pressed button usages (1-based)
-5. Button usages → `GamepadState` fields via `resolveButtonTarget()` + `applyButton()`
+1. **Nintendo custom parser check** — if `dev.useCustomParser` is set (all Nintendo VID 0x057E devices), the entire HidP_* pipeline is bypassed. `parseSwitchProReport()` reads the raw byte layout directly for report ID 0x30 (full mode) and 0x3F (simple HID mode). See "Nintendo Switch Pro Custom Parser" below.
+2. Report ID check — incompatible reports are skipped (returns false)
+3. `HidP_GetUsageValue` — reads each analog axis value using the `valueCaps` list. Each `valueCaps` entry is iterated over its full `[UsageMin, UsageMax]` range (when `IsRange=1`) to handle controllers that pack multiple axes into a single caps entry.
+4. Hat switch (usage 0x39) → mapped to `DpadState` using `hatDirTable` (0=N, 1=NE, … 7=NW, ≥8=center)
+5. `HidP_GetUsages` — returns the list of currently pressed button usages (1-based)
+6. Button usages → `GamepadState` fields via `resolveButtonTarget()` + `applyButton()`
 
 **Preparsed data**: Fetched once per device via `GetRawInputDeviceInfoW(RIDI_PREPARSEDDATA)` and cached in `hidDeviceInfo`. Required for all `HidP_*` calls. Allocation must be at least 8-byte aligned (Go's `make([]byte)` satisfies this on all supported architectures).
 
@@ -301,6 +302,22 @@ Non-XInput HID gamepads (PS4/PS5/Switch Pro/generic) are captured via the **same
 - `HIDButtons map[uint16]string` — maps 1-based button usage numbers to button target names. If nil, `defaultButtonOrder` is used.
 - PS4/PS5: `playStationHIDAxes` (Z=right_x, Rz=right_y, Rx=lt, Ry=rt) — different from generic default which assigns Z to right trigger.
 - Switch Pro: `switchProHIDAxes` (Z=right_x, Rz=right_y, no analog triggers in HID report). `switchProHIDButtons` remaps face buttons (Y=1, B=2, A=3, X=4 — Nintendo layout differs from default). `switchProMapping` with `Name: "switch_pro"` ensures the frontend loads the correct layout config.
+
+**Nintendo Switch Pro Custom Parser** (`parseSwitchProReport()` in `hidinput_shared.go`):
+
+Nintendo controllers (VID 0x057E) have USB HID descriptors that define a **fake standard HID layout** for report ID 0x30. The descriptor claims bytes 1-2 are buttons and bytes 3-10 are 16-bit axes, but the actual proprietary protocol has: byte 1 = timer counter (increments every frame), byte 2 = battery info, bytes 3-5 = button state (3 bytes bit-mapped), bytes 6-11 = stick data (12-bit packed). Using HidP_* with this fake descriptor causes the timer byte to be parsed as button state → random button toggling every frame.
+
+- `initHIDDevice()` detects Nintendo VID and sets `hidDeviceInfo.useCustomParser = true`, then returns early without fetching preparsed data or calling HidP_GetCaps (not needed for direct parsing).
+- `parseHIDReport()` checks `useCustomParser` first and dispatches to `parseSwitchProReport()`, completely bypassing the HidP_* pipeline.
+- `parseSwitchProReport()` handles two report formats:
+  - Report ID 0x30 (full mode, 60Hz): 3-byte buttons at bytes 3-5, 12-bit packed sticks at bytes 6-11. `normalize12bit()` maps 0-4095 (centre 2048) to [-1.0, 1.0].
+  - Report ID 0x3F (simple HID mode, event-driven): 2-byte buttons at bytes 1-2, hat switch at byte 3, 16-bit sticks. `normalize16bit()` maps 0-65535 (centre 32768) to [-1.0, 1.0].
+  - All other report IDs (0x21 subcommand reply, 0x81 USB command ACK) → rejected (returns false).
+- Button byte layout for 0x30: byte 3 = right-side (Y/X/B/A/R/ZR), byte 4 = shared (Minus/Plus/RS/LS/Home/Capture), byte 5 = left-side (Dpad/L/ZL).
+- ZL/ZR are digital-only: mapped to `Triggers.LT.Value = 1.0` / `Triggers.RT.Value = 1.0` when pressed.
+- **Y-axis direction per report mode**:
+  - Report ID 0x30 (full mode): Nintendo proprietary format uses Y positive-**upward** natively — same as XInput convention. No negation applied.
+  - Report ID 0x3F (simple HID mode): Standard HID convention, Y positive-**downward**. Negated to match XInput positive-up.
 
 **SDL GameControllerDB mapping path** (takes priority over legacy HID path when available):
 - `LoadSDLDB(externalPath)` in `reader.go` always loads the **embedded** `gamecontrollerdb.txt` (via `go:embed` in `sdldb_embed.go`) as a base, then overlays an external file at `externalPath` if present. External entries take priority, allowing users to place an updated `gamecontrollerdb.txt` next to the executable without recompiling.
@@ -407,9 +424,11 @@ Two rendering engines coexist in `app.js`, selected by the `?overlay=` URL param
 | Mode | Renderer |
 |------|----------|
 | Built-in geometric | Canvas shapes (SVG path / rounded rects) |
-| Input Overlay (`?overlay=<name>`) | Texture atlas (PNG sprite sheet) |
+| Input Overlay (`?overlay=<name>`) | Texture atlas (PNG or SVG sprite sheet) |
 
 **Supported element types:** texture (0), keyboard_button (1), gamepad_button (2), mouse_button (3), mouse_wheel (4), analog_stick (5), trigger (6), gamepad_id (7), dpad (8), mouse_movement (9)
+
+**Gamepad button codes** (`IO_BUTTON_CODE_MAP` in `app.js`): Maps SDL2 `SDL_GameControllerButton` enum values to InputView state paths. Key mappings: A(0), B(1), X(2), Y(3), Back(4), Guide(5), Start(6), LS(7), RS(8), LB(9), RB(10), DpadUp-Right(11-14), Capture(15), Touchpad(20). Code 15 maps to `state.buttons.capture` (SDL_CONTROLLER_BUTTON_MISC1 — used for Switch Pro Capture, Xbox Series Share, PS5 Mic).
 
 **Canvas sizing**: In overlay mode, `canvasW`/`canvasH` are set to `overlay_width`/`overlay_height` from the config once loaded. In simple mode (`?simple=1`) the canvas is stretched to fill the viewport while preserving aspect ratio. In geometric/overlay non-simple mode, `setupCanvas()` reads the CSS-constrained width via `getBoundingClientRect()`, derives height from `canvasH * scale` to preserve aspect ratio, and applies `ctx.setTransform(dpr * scale, 0, 0, dpr * scale, 0, 0)` so that drawing coordinates always stay in the `[0, canvasW] × [0, canvasH]` logical space — this prevents content clipping when `max-width: 100%` CSS causes the canvas element to be narrower than the overlay's native dimensions. In geometric mode the canvas stays at the fixed 500×330 logical size.
 
@@ -421,7 +440,9 @@ Two rendering engines coexist in `app.js`, selected by the `?overlay=` URL param
 
 **Keyboard/mouse-only overlays**: if the config contains no gamepad element types (2/5/6/7/8), the Player info bar and controller status bar are hidden, `select_player` is not sent, and rendering starts immediately without waiting for a gamepad connection.
 
-**Overlay variants**: A single PNG texture atlas can be shared by multiple JSON configs. Place variant configs in the same subdirectory with different filenames — e.g. `overlays/dualsense/compact.json` — and access them via `?overlay=dualsense/compact`. The PNG is always loaded from `overlays/<dir>/<dir>.png` regardless of the variant name.
+**Texture atlas loading**: The texture atlas is loaded from `overlays/<dir>/<dir>.png`. If the PNG is not found, the loader automatically falls back to `overlays/<dir>/<dir>.svg`. Both formats are rendered via `HTMLImageElement` + `ctx.drawImage()`, so SVG atlases work without additional processing.
+
+**Overlay variants**: A single texture atlas (PNG or SVG) can be shared by multiple JSON configs. Place variant configs in the same subdirectory with different filenames — e.g. `overlays/dualsense/compact.json` — and access them via `?overlay=dualsense/compact`. The texture is always loaded from `overlays/<dir>/<dir>.png` (with SVG fallback) regardless of the variant name.
 
 Presets are served from `overlays/<name>/` next to the executable (mounted at `/overlays/`). See [docs/input-overlay-format.md](docs/input-overlay-format.md) for full format specification.
 

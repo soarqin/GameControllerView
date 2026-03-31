@@ -5,6 +5,25 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.3.0] - 2026-04-01
+
+### Added
+
+- Nintendo Switch Pro custom HID report parser: bypasses HidP_* pipeline entirely for Nintendo controllers (VID 0x057E) whose USB HID descriptors define a fake standard layout. Parses the actual proprietary byte format directly for report ID 0x30 (full mode, 60Hz) and 0x3F (simple HID mode).
+- SVG texture atlas fallback for Input Overlay: when the PNG atlas (`<dir>/<dir>.png`) is not found, the loader automatically attempts `<dir>/<dir>.svg`. Both formats work through the same `HTMLImageElement` + `ctx.drawImage()` pipeline.
+
+### Fixed
+
+- Switch Pro controller stick Y-axis was inverted in 0x30 full mode. The proprietary protocol uses Y positive-upward (matching XInput convention), but the parser incorrectly negated it assuming standard HID positive-downward convention. Removed the negation for 0x30; kept it for 0x3F simple mode which does follow HID convention.
+- Switch Pro built-in geometric renderer: redesigned SVG body shape (wider, flatter, flat top edge matching real controller silhouette), fixed face button positions to match Nintendo layout (A=east, B=south, X=north, Y=west — previously used Xbox layout), fixed D-pad overlapping with left stick (was only 25px apart, now properly separated), corrected L/R shoulder button positions to visually connect with ZL/ZR triggers.
+- Input Overlay button code 15 (`SDL_CONTROLLER_BUTTON_MISC1`) mapped to non-existent `state.buttons.misc` instead of `state.buttons.capture`. Switch Pro Capture, Xbox Series Share, and PS5 Mic buttons now respond correctly in overlay mode.
+- Switch Pro wired connection caused erratic button state jumping. The HID descriptor's fake layout made HidP_* parse the timer byte as button state, toggling random buttons every frame.
+
+### Changed
+
+- Switch Pro overlay preset (`switch-pro-controller-sdl.json`): changed Home and Capture elements from type 0 (static texture) to type 2 (gamepad_button) with SDL codes 5 and 15 respectively, enabling press visualization.
+- Resolved data races (`atomic.Int32` for `Client.wantsKeyMouse`), resource leaks (unclosed HTTP response bodies), and unchecked errors across the codebase.
+
 ## [0.2.1] - 2026-03-19
 
 ### Fixed

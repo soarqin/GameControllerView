@@ -216,6 +216,12 @@ type hidDeviceInfo struct {
 	isXInput  bool // filtered out: device is an XInput virtual HID
 	isInvalid bool // failed to initialise; skip future events
 
+	// useCustomParser is true for Nintendo controllers whose USB HID descriptor
+	// defines a fake standard HID layout that doesn't match the actual proprietary
+	// report format. When set, parseHIDReport bypasses HidP_* entirely and uses
+	// parseSwitchProReport to read the known byte layout directly.
+	useCustomParser bool
+
 	preparsedData []byte // raw PHIDP_PREPARSED_DATA blob
 
 	caps       hidpCaps
@@ -296,6 +302,17 @@ func initHIDDevice(hDevice uintptr) *hidDeviceInfo {
 
 	dev.mapping = GetMapping(dev.vendorID, dev.productID)
 	dev.name = fmt.Sprintf("%s (VID_%04X&PID_%04X)", dev.mapping.Name, dev.vendorID, dev.productID)
+
+	// Nintendo controllers (Switch Pro, Joy-Con, etc.) have USB HID descriptors
+	// that describe a fake standard HID layout for report ID 0x30. The actual
+	// data follows a proprietary protocol with completely different byte offsets.
+	// HidP_* parse the fake layout and produce garbage (timer byte as buttons,
+	// button bytes as axes). Use a custom direct-byte parser instead.
+	if isNintendoController(dev.vendorID) {
+		dev.useCustomParser = true
+		slog.Info("hidinput: Nintendo device detected, using custom report parser", "device", dev.name)
+		return dev
+	}
 
 	// Get preparsed data (needed for HidP_* calls).
 	var prepSize uint32
@@ -459,6 +476,13 @@ func buildExpectedReportIDs(valueCaps []hidpValueCaps, buttonCaps []hidpButtonCa
 // parseHIDReport parses a single HID input report into a GamepadState.
 // Returns (state, false) if the report should be skipped (incompatible report ID).
 func parseHIDReport(dev *hidDeviceInfo, rawData []byte, dz float64) (GamepadState, bool) {
+	// Nintendo controllers have USB HID descriptors that lie about the 0x30
+	// report layout. Bypass HidP_* entirely and use the custom direct-byte
+	// parser that reads the actual proprietary format.
+	if dev.useCustomParser {
+		return parseSwitchProReport(dev.name, rawData, dz)
+	}
+
 	controllerType := dev.mapping.Name
 	if dev.sdlMap != nil {
 		controllerType = sdlNameToControllerType(dev.sdlMap.Name)
@@ -474,10 +498,10 @@ func parseHIDReport(dev *hidDeviceInfo, rawData []byte, dz float64) (GamepadStat
 	}
 
 	// Check if this report's ID matches any known input report ID.
-	// HID devices (e.g. Switch Pro Controller) may send non-input reports
-	// (subcommand responses, feature reports) whose layout doesn't match the
-	// input caps. Parsing them produces an all-zero GamepadState that alternates
-	// with the real state, causing buttons/axes to "jump" erratically.
+	// HID devices may send non-input reports (subcommand responses, feature
+	// reports) whose layout doesn't match the input caps. Parsing them produces
+	// an all-zero GamepadState that alternates with the real state, causing
+	// buttons/axes to "jump" erratically.
 	if dev.expectedReportIDs != nil {
 		reportID := rawData[0]
 		if _, ok := dev.expectedReportIDs[reportID]; !ok {

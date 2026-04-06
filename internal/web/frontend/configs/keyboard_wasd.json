@@ -1,0 +1,46 @@
+{
+  "name": "WASD Gaming",
+  "keySize": 40,
+  "gap": 4,
+  "padding": 8,
+  "rows": [
+    [
+      {"key": "Escape", "label": "Esc"},
+      {"pad": 0.5},
+      {"key": "1"},
+      {"key": "2"},
+      {"key": "3"},
+      {"key": "4"},
+      {"key": "5"}
+    ],
+    [
+      {"key": "Tab", "width": 1.5},
+      {"key": "Q"},
+      {"key": "W"},
+      {"key": "E"},
+      {"key": "R"},
+      {"key": "T"}
+    ],
+    [
+      {"key": "CapsLock", "label": "Caps", "width": 1.75},
+      {"key": "A"},
+      {"key": "S"},
+      {"key": "D"},
+      {"key": "F"},
+      {"key": "G"}
+    ],
+    [
+      {"key": "LShift", "label": "Shift", "width": 2.25},
+      {"key": "Z"},
+      {"key": "X"},
+      {"key": "C"},
+      {"key": "V"}
+    ],
+    [
+      {"key": "LCtrl", "label": "Ctrl", "width": 1.5},
+      {"pad": 0.5},
+      {"key": "LAlt", "label": "Alt", "width": 1.25},
+      {"key": "Space", "width": 4}
+    ]
+  ]
+}

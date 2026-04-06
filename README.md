@@ -54,6 +54,9 @@ http://localhost:8080
 | `simple` | Transparent background, no UI | off | `?simple=1` |
 | `alpha` | Gamepad body opacity (0.0–1.0) | `1.0` | `?alpha=0.5` |
 | `overlay` | Input Overlay preset name | — | `?overlay=dualsense` |
+| `gamepad` | Built-in gamepad renderer; optional value forces controller type | — | `?gamepad`, `?gamepad=xbox` |
+| `mouse` | Built-in mouse renderer (explicit multi-canvas mode) | — | `?mouse=1` |
+| `keyboard` | Built-in keyboard renderer with named preset | — | `?keyboard=wasd` |
 | `mouse_sens` | Mouse movement sensitivity divisor (lower = more sensitive) | `500` | `?mouse_sens=300` |
 
 ### Examples
@@ -76,6 +79,18 @@ http://localhost:8080/?overlay=dualsense
 
 # Mouse overlay with increased sensitivity
 http://localhost:8080/?overlay=mouse&mouse_sens=300&simple=1
+
+# Built-in mouse renderer
+http://localhost:8080/?mouse=1
+
+# Built-in keyboard (WASD gaming keys)
+http://localhost:8080/?keyboard=wasd
+
+# All three devices combined
+http://localhost:8080/?gamepad&mouse=1&keyboard=wasd&simple=1
+
+# Keyboard only, transparent (for OBS)
+http://localhost:8080/?keyboard=wasd&simple=1
 
 # Combine parameters
 http://localhost:8080/?overlay=dualsense&p=2&simple=1

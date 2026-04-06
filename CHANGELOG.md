@@ -92,3 +92,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 -->
 
 ## [Unreleased]
+
+### Added
+
+- Built-in mouse renderer: top-down view with left/right/middle/X1/X2 button states, scroll wheel indicator (200ms timeout), and movement direction arrow
+- Built-in keyboard renderer: config-driven row-based layout, pressed-key highlighting, WASD gaming preset included
+- URL parameters `?gamepad[=type]`, `?mouse=1`, `?keyboard=<preset>` for explicit device selection; freely combinable (e.g. `?gamepad&mouse=1&keyboard=wasd&simple=1`)
+- Multi-canvas layout: each device gets an independent Canvas element arranged via CSS flexbox with 16px gap
+- External keyboard config support: place JSON files in `keyboards/` directory next to executable; external configs take priority over built-in ones
+- `--keyboard-dir` CLI flag and `keyboard-dir` TOML option (default: `keyboards`) for external keyboard layout directory
+- `KEY_NAME_TO_SCANCODE` lookup table mapping 80+ key names to uiohook scancodes
+- Simple mode (`?simple=1`) works with multi-canvas: transparent background, all canvases visible at natural per-device dimensions

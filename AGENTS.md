@@ -45,7 +45,7 @@ No external DLL required. Gamepad input uses XInput (`xinput1_4.dll`, built into
 | `overlay` | Input Overlay config name or variant path (enables texture-atlas renderer) | `?overlay=dualsense`, `?overlay=dualsense/compact` |
 | `gamepad` | Explicit built-in gamepad renderer; optional value forces type | `?gamepad`, `?gamepad=xbox` |
 | `mouse` | Enable built-in mouse canvas in explicit multi-canvas mode | `?mouse=1` |
-| `keyboard` | Enable built-in keyboard canvas placeholder in explicit multi-canvas mode | `?keyboard=wasd` |
+| `keyboard` | Enable built-in keyboard canvas with named preset in explicit multi-canvas mode | `?keyboard=wasd` |
 | `mouse_sens` | Mouse movement sensitivity divisor (default 500; lower = more sensitive) | `?mouse_sens=300` |
 
 ## Project Structure
@@ -143,12 +143,12 @@ The server mounts this directory at `/overlays/`. Presets are **not** embedded i
 
 `internal/config/config.go` provides `Load(exeDir string) (Config, error)`:
 
-1. **pflag** defines 7 CLI flags (parsed from `os.Args`). `--help` prints usage and exits 0.
+1. **pflag** defines 8 CLI flags (parsed from `os.Args`). `--help` prints usage and exits 0.
 2. **viper** reads optional `inputview.toml` from `exeDir` or current directory.
 3. CLI flags take priority over TOML file (via `viper.BindPFlags`).
 4. Validation: deadzone 0.0–1.0; poll-rate ≥ 1; mouse-sens > 0; log-level ∈ {debug,info,warn,error}.
 
-**Config fields** (7):
+**Config fields** (8):
 | Field | Flag | Default | Purpose |
 |-------|------|---------|---------|
 | `Addr` | `--addr` | `:8080` | HTTP listen address |
@@ -156,6 +156,7 @@ The server mounts this directory at `/overlays/`. Presets are **not** embedded i
 | `Deadzone` | `--deadzone` | `0.05` | Analog stick deadzone |
 | `MouseSensitivity` | `--mouse-sens` | `500.0` | Mouse delta divisor |
 | `OverlayDir` | `--overlay-dir` | `overlays` | Overlay presets directory |
+| `KeyboardDir` | `--keyboard-dir` | `keyboards` | External keyboard layout configs directory |
 | `SDLDBPath` | `--sdl-db` | `gamecontrollerdb.txt` | SDL gamecontrollerdb path |
 | `LogLevel` | `--log-level` | `info` | Log level |
 
@@ -406,6 +407,35 @@ Gamepad body outlines are defined in the `body` section of each config file. The
 }
 ```
 
+#### Keyboard Layout Configuration
+
+Built-in keyboard configs live in `internal/web/frontend/configs/keyboard_*.json`. External configs go in `keyboards/` next to the executable (served at `/keyboards/`). External configs take priority over built-in ones when names collide.
+
+**Config format** (`keyboard_wasd.json` example):
+```json
+{
+  "name": "WASD Gaming",
+  "keySize": 40,
+  "gap": 4,
+  "padding": 8,
+  "rows": [
+    [{"key": "Escape", "label": "Esc"}, {"pad": 0.5}, {"key": "1"}, {"key": "2"}],
+    [{"key": "Tab", "width": 1.5}, {"key": "Q"}, {"key": "W"}, {"key": "E"}]
+  ]
+}
+```
+
+- `keySize`: base key size in pixels (default 40)
+- `gap`: gap between keys in pixels (default 4)
+- `padding`: outer padding in pixels (default 8)
+- `rows`: array of rows; each entry is a key object or a spacer
+- `key`: key name from `KEY_NAME_TO_SCANCODE` table (A–Z, 1–0, F1–F12, Space, LShift, LCtrl, etc.)
+- `width`: optional width multiplier (default 1.0)
+- `label`: optional display label override
+- `pad`: spacer entry — fractional key-width gap (e.g. `{"pad": 0.5}`)
+
+Canvas dimensions are auto-computed from the config layout by `computeKeyboardDimensions()`. `computeKeyboardLayout()` flattens rows into positioned `{ key, label, scancode, x, y, w, h }` entries cached on `renderer.keyboardLayout`.
+
 ### System Tray (Windows GUI Mode)
 
 The system tray provides menu access when running in GUI mode (double-clicked executable). Key points:
@@ -419,6 +449,23 @@ The system tray provides menu access when running in GUI mode (double-clicked ex
   - Overlay sub-item clicks are aggregated via a shared `chan string` so the main `select` loop avoids a dynamic number of cases.
 - **"Copy URL for Streaming" sub-menu**: Mirrors "Open Browser" with identical sub-items, but instead of opening a browser the URL is written to the Windows clipboard. All URLs include `?simple=1` (transparent background, no UI chrome) for use in streaming software (OBS Browser Source, etc.). Sub-item URLs also include the `overlay=` parameter. Clipboard writes use `user32.dll`/`kernel32.dll` Win32 API directly (no external dependency).
 - **Overlay variants**: A variant config `overlays/dualsense/compact.json` appears as sub-item "dualsense/compact", opening the page with `?overlay=dualsense/compact`. Its PNG texture atlas is still `overlays/dualsense/dualsense.png`.
+
+### Multi-Canvas Rendering
+
+When any of `?gamepad`, `?mouse`, or `?keyboard` URL params are present, the frontend enters **explicit mode**:
+- Each device gets an independent `<canvas class="device-canvas">` element inside `#device-container`
+- CSS flexbox arranges canvases (wrapping, centered, 16px gap)
+- Each canvas has its own logical dimensions: gamepad 500×330, mouse 160×270, keyboard (computed from config)
+- A per-renderer dirty flag avoids unnecessary redraws — gamepad updates only dirty the gamepad canvas; `km_full`/`km_delta` dirty the mouse and keyboard canvases
+- `subscribe_km` is automatically sent on WebSocket open whenever the mouse or keyboard renderer is active
+
+Without any of these params → **legacy mode**: single `#gamepad-canvas`, identical behavior to before.
+
+`?overlay=` is mutually exclusive with explicit mode. If both appear, overlay takes priority and a `console.warn` is logged.
+
+`activeRenderers` entries have the shape `{ canvas, ctx, canvasW, canvasH, dirty, draw, type }`. When `activeRenderers.length === 0`, `render()` falls back to the original legacy single-canvas flow.
+
+**Simple mode in explicit mode** (`?simple=1`): background is transparent and each canvas sizes to its natural per-device dimensions so CSS flex-wrap can lay out multiple canvases cleanly.
 
 ### Input Overlay Rendering
 
@@ -445,6 +492,8 @@ Two rendering engines still coexist inside that architecture, selected by the `?
 **Canvas sizing**: In overlay mode, `canvasW`/`canvasH` are set to `overlay_width`/`overlay_height` from the config once loaded. In simple mode (`?simple=1`) the canvas is stretched to fill the viewport while preserving aspect ratio. In geometric/overlay non-simple mode, `setupCanvas()` reads the CSS-constrained width via `getBoundingClientRect()`, derives height from `canvasH * scale` to preserve aspect ratio, and applies `ctx.setTransform(dpr * scale, 0, 0, dpr * scale, 0, 0)` so that drawing coordinates always stay in the `[0, canvasW] × [0, canvasH]` logical space — this prevents content clipping when `max-width: 100%` CSS causes the canvas element to be narrower than the overlay's native dimensions. In geometric mode the canvas stays at the fixed 500×330 logical size.
 
 **Explicit multi-canvas sizing**: `setupRendererCanvas(renderer)` handles the new explicit-mode canvases. Single-canvas simple mode still fills the viewport; multi-canvas simple mode falls back to natural per-device sizing so CSS flex-wrap can lay out multiple canvases cleanly. `setupRendererNormal(renderer)` preserves each renderer's logical aspect ratio from its own `canvasW`/`canvasH`.
+
+**Built-in keyboard renderer**: Explicit `?keyboard=<name>` mode now uses a geometric row-based layout engine. `computeKeyboardLayout(config)` flattens keyboard JSON rows into positioned `{ key, label, scancode, x, y, w, h }` entries, caching the result on `renderer.keyboardLayout`. `drawKeyboardRenderer()` renders rounded keycaps with labels and highlights pressed keys from `kmState.keys` using `COLORS.buttonPressed`. Missing keyboard configs keep the placeholder text instead of throwing.
 
 **Dirty-flag rendering**: Legacy mode still uses the global `dirty` flag. Explicit mode adds per-renderer dirty flags so gamepad updates only dirty gamepad canvases, while `km_full` / `km_delta` also dirty the mouse and keyboard canvases.
 

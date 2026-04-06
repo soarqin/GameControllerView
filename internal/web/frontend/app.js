@@ -1715,10 +1715,8 @@ function init() {
         canvas.style.display = 'none';
 
         if (!hasGamepadParam) {
-            const playerInfo = document.getElementById('player-info');
             const controllerInfo = document.getElementById('controller-info');
             const statusEl = document.getElementById('status');
-            if (playerInfo) playerInfo.style.display = 'none';
             if (controllerInfo) controllerInfo.style.display = 'none';
             if (statusEl) statusEl.style.display = 'none';
         }

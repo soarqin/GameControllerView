@@ -315,6 +315,8 @@ function applyKMDelta(delta) {
         kmState.wheelUp = delta.wheelUp || false;
         kmState.wheelDown = delta.wheelDown || false;
         kmState.wheelTimestamp = performance.now();
+        // Schedule a redraw after wheel timeout so the highlight clears
+        setTimeout(() => { dirty = true; markRendererDirty(['mouse']); }, WHEEL_TIMEOUT_MS + 20);
     }
     dirty = true;
     markRendererDirty(['mouse', 'keyboard']);
@@ -969,8 +971,8 @@ const MOUSE_CONFIG = {
         left:   { x: 5,  y: 15,  width: 65,  height: 80, radius: 8,  label: 'L',  code: 1 },
         right:  { x: 90, y: 15,  width: 65,  height: 80, radius: 8,  label: 'R',  code: 2 },
         middle: { x: 62, y: 15,  width: 36,  height: 55, radius: 6,  label: 'M',  code: 3 },
-        x1:     { x: 5,  y: 110, width: 22,  height: 35, radius: 5,  label: 'X1', code: 4 },
-        x2:     { x: 5,  y: 150, width: 22,  height: 35, radius: 5,  label: 'X2', code: 5 },
+        x1:     { x: 5,  y: 150, width: 22,  height: 35, radius: 5,  label: 'X1', code: 4 },
+        x2:     { x: 5,  y: 110, width: 22,  height: 35, radius: 5,  label: 'X2', code: 5 },
     },
     wheel: {
         x: 68, y: 18, width: 24, height: 50, radius: 12
@@ -994,11 +996,47 @@ function drawMouseRenderer(renderer) {
     c.stroke(bodyPath);
     c.restore();
 
-    // Scroll wheel
+    // Mouse buttons (middle button skipped — drawn together with scroll wheel below)
+    const savedCtx = ctx;
+    for (const [name, btn] of Object.entries(cfg.buttons)) {
+        if (name === 'middle') continue;
+        const pressed = kmState.mouseButtons[btn.code] === true;
+        c.fillStyle = pressed ? COLORS.buttonPressed : COLORS.buttonDefault;
+        c.strokeStyle = COLORS.outline;
+        c.lineWidth = 1.5;
+        ctx = c;
+        drawRoundRect(btn.x, btn.y, btn.width, btn.height, btn.radius);
+        c.fill();
+        c.stroke();
+
+        c.fillStyle = pressed ? COLORS.buttonLabelPressed : COLORS.buttonLabel;
+        const fontSize = btn.width > 30 ? 12 : 9;
+        c.font = `bold ${fontSize}px "Segoe UI", sans-serif`;
+        c.textAlign = 'center';
+        c.textBaseline = 'middle';
+        c.fillText(btn.label, btn.x + btn.width / 2, btn.y + btn.height / 2);
+    }
+    ctx = savedCtx;
+
+    // Middle button + scroll wheel (combined: middle button is the wheel housing)
     const w = cfg.wheel;
+    const mb = cfg.buttons.middle;
+    const middlePressed = kmState.mouseButtons[mb.code] === true;
     const wheelActive = (kmState.wheelUp || kmState.wheelDown) &&
         (performance.now() - kmState.wheelTimestamp <= WHEEL_TIMEOUT_MS);
 
+    // Middle button background
+    c.fillStyle = middlePressed ? COLORS.buttonPressed : COLORS.buttonDefault;
+    c.strokeStyle = COLORS.outline;
+    c.lineWidth = 1.5;
+    const savedCtx2 = ctx;
+    ctx = c;
+    drawRoundRect(mb.x, mb.y, mb.width, mb.height, mb.radius);
+    ctx = savedCtx2;
+    c.fill();
+    c.stroke();
+
+    // Scroll wheel indicator (on top of middle button)
     if (wheelActive && kmState.wheelUp) {
         c.fillStyle = COLORS.buttonPressed;
         c.beginPath();
@@ -1029,26 +1067,37 @@ function drawMouseRenderer(renderer) {
     c.roundRect(w.x, w.y, w.width, w.height, w.radius);
     c.stroke();
 
-    // Mouse buttons
-    const savedCtx = ctx;
-    for (const [, btn] of Object.entries(cfg.buttons)) {
-        const pressed = kmState.mouseButtons[btn.code] === true;
-        c.fillStyle = pressed ? COLORS.buttonPressed : COLORS.buttonDefault;
-        c.strokeStyle = COLORS.outline;
-        c.lineWidth = 1.5;
-        ctx = c;
-        drawRoundRect(btn.x, btn.y, btn.width, btn.height, btn.radius);
-        c.fill();
-        c.stroke();
-
-        c.fillStyle = pressed ? COLORS.buttonLabelPressed : COLORS.buttonLabel;
-        const fontSize = btn.width > 30 ? 12 : 9;
-        c.font = `bold ${fontSize}px "Segoe UI", sans-serif`;
+    // Scroll chevrons when active, M label when idle
+    if (wheelActive) {
+        const chevronSize = 5;
+        const chevronX = w.x + w.width / 2;
+        c.strokeStyle = COLORS.buttonLabelPressed;
+        c.lineWidth = 2;
+        c.lineCap = 'round';
+        c.lineJoin = 'round';
+        if (kmState.wheelUp) {
+            const cy = w.y + w.height * 0.25;
+            c.beginPath();
+            c.moveTo(chevronX - chevronSize, cy + chevronSize * 0.4);
+            c.lineTo(chevronX, cy - chevronSize * 0.4);
+            c.lineTo(chevronX + chevronSize, cy + chevronSize * 0.4);
+            c.stroke();
+        }
+        if (kmState.wheelDown) {
+            const cy = w.y + w.height * 0.75;
+            c.beginPath();
+            c.moveTo(chevronX - chevronSize, cy - chevronSize * 0.4);
+            c.lineTo(chevronX, cy + chevronSize * 0.4);
+            c.lineTo(chevronX + chevronSize, cy - chevronSize * 0.4);
+            c.stroke();
+        }
+    } else {
+        c.fillStyle = COLORS.buttonLabel;
+        c.font = 'bold 12px "Segoe UI", sans-serif';
         c.textAlign = 'center';
         c.textBaseline = 'middle';
-        c.fillText(btn.label, btn.x + btn.width / 2, btn.y + btn.height / 2);
+        c.fillText(mb.label, mb.x + mb.width / 2, mb.y + mb.height / 2);
     }
-    ctx = savedCtx;
 
     // Movement indicator
     const mv = cfg.movement;
@@ -1066,7 +1115,8 @@ function drawMouseRenderer(renderer) {
     const magnitude = Math.sqrt(mx * mx + my * my);
     if (magnitude > 0.01) {
         const angle = Math.atan2(mx, -my);
-        const arrowLen = Math.min(mv.radius * 0.75, magnitude * mv.radius);
+        const minArrowLen = mv.radius * 0.3;
+        const arrowLen = Math.min(mv.radius * 0.75, Math.max(minArrowLen, magnitude * mv.radius));
         const arrowX = mv.x + Math.sin(angle) * arrowLen;
         const arrowY = mv.y - Math.cos(angle) * arrowLen;
 
@@ -1083,13 +1133,13 @@ function drawMouseRenderer(renderer) {
         c.beginPath();
         c.moveTo(arrowX, arrowY);
         c.lineTo(
-            arrowX - headLen * Math.cos(angle - headAngle + Math.PI / 2),
-            arrowY + headLen * Math.sin(angle - headAngle + Math.PI / 2)
+            arrowX - headLen * Math.sin(angle + headAngle),
+            arrowY + headLen * Math.cos(angle + headAngle)
         );
         c.moveTo(arrowX, arrowY);
         c.lineTo(
-            arrowX - headLen * Math.cos(angle + headAngle + Math.PI / 2),
-            arrowY + headLen * Math.sin(angle + headAngle + Math.PI / 2)
+            arrowX - headLen * Math.sin(angle - headAngle),
+            arrowY + headLen * Math.cos(angle - headAngle)
         );
         c.stroke();
     }

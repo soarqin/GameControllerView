@@ -568,6 +568,10 @@ Create a JSON file in `internal/web/frontend/configs/keyboard_<name>.json` (buil
 
 The mouse renderer is defined by the `MOUSE_CONFIG` constant and `drawMouseRenderer()` function in `app.js`. Adjust positions/sizes in `MOUSE_CONFIG`; all colors derive from the `COLORS` constant.
 
+**Movement indicator minimum length**: The movement arrow has a minimum extension of `mv.radius * 0.3` (30% of the indicator circle radius) so that slow mouse movements still produce a clearly visible directional arrow. The actual arrow length is `clamp(minArrowLen, magnitude * radius, radius * 0.75)`.
+
+**Scroll wheel chevrons**: When the wheel is actively scrolling, directional chevron arrows (▲/▼) are drawn on the wheel's top/bottom halves in `COLORS.buttonLabelPressed` to reinforce the scroll direction alongside the existing color highlighting.
+
 ### Modifying Canvas Rendering
 
 All drawing logic is in `internal/web/frontend/app.js` in `drawController()` and its sub-functions. Button positions and sizes are controlled by `configs/*.json`, colors by `COLORS` constants.

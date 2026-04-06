@@ -441,7 +441,8 @@ function loadKeyboardConfig(name) {
         return;
     }
     // Try external keyboards/ directory first (user overrides embedded)
-    fetch('/keyboards/' + encodeURIComponent(name) + '.json')
+    // Do NOT encodeURIComponent here: names like "custom/mykeys" should map to /keyboards/custom/mykeys.json
+    fetch('/keyboards/' + name + '.json')
         .then(r => {
             if (!r.ok) throw new Error('HTTP ' + r.status);
             return r.json();

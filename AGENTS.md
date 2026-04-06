@@ -131,8 +131,12 @@ InputView/
             └── configs/                # Gamepad layout JSON configs
                 ├── xbox.json
                 ├── playstation.json
-                └── switch_pro.json
+                ├── switch_pro.json
+                └── keyboard_wasd.json  # Built-in WASD gaming keyboard preset
 ```
+
+Input Overlay presets are **external only** — place them in an `overlays/` directory next to the executable.
+Keyboard layout configs are served from `keyboards/` next to the executable (at `/keyboards/`). Built-in keyboard presets live in `internal/web/frontend/configs/keyboard_*.json`. External configs take priority over built-in when names collide.
 
 Input Overlay presets are **external only** — place them in an `overlays/` directory next to the executable.
 The server mounts this directory at `/overlays/`. Presets are **not** embedded in the binary (GPL-2.0 license conflict).
@@ -555,6 +559,14 @@ All dpad directions and triggers use `PressedOpacity`. All triggers use `trigger
 2. If button layout differs from existing mappings, create new `DeviceMapping` variable
 3. `internal/web/frontend/configs/`: Add new layout JSON file
 4. `internal/web/frontend/app.js`: Add mapping name → config filename in `configMap`
+
+### Adding a New Keyboard Preset
+
+Create a JSON file in `internal/web/frontend/configs/keyboard_<name>.json` (built-in) or `keyboards/<name>.json` next to the executable (external, takes priority). Use the row-based format documented in the "Keyboard Layout Configuration" section above. Access via `?keyboard=<name>`.
+
+### Modifying Mouse Renderer
+
+The mouse renderer is defined by the `MOUSE_CONFIG` constant and `drawMouseRenderer()` function in `app.js`. Adjust positions/sizes in `MOUSE_CONFIG`; all colors derive from the `COLORS` constant.
 
 ### Modifying Canvas Rendering
 

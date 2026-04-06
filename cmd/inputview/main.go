@@ -83,7 +83,7 @@ func main() {
 	go broadcaster.Run()
 
 	// Create and start HTTP server
-	srv := server.New(h, broadcaster, reader, kmReader, web.FrontendFS(), web.GzipCache(), appExeDir, cfg.OverlayDir, cfg.Addr)
+	srv := server.New(h, broadcaster, reader, kmReader, web.FrontendFS(), web.GzipCache(), appExeDir, cfg.OverlayDir, cfg.KeyboardDir, cfg.Addr)
 	serverErrCh := make(chan error, 1)
 	go func() {
 		if err := srv.ListenAndServe(); err != nil && err != http.ErrServerClosed {

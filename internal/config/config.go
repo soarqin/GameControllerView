@@ -16,6 +16,7 @@ type Config struct {
 	Deadzone         float64 `mapstructure:"deadzone"`
 	MouseSensitivity float64 `mapstructure:"mouse-sens"`
 	OverlayDir       string  `mapstructure:"overlay-dir"`
+	KeyboardDir      string  `mapstructure:"keyboard-dir"`
 	SDLDBPath        string  `mapstructure:"sdl-db"`
 	LogLevel         string  `mapstructure:"log-level"`
 }
@@ -33,6 +34,7 @@ func Load(exeDir string) (Config, error) {
 	flags.Float64("deadzone", 0.05, "Analog stick deadzone, range 0.0-1.0")
 	flags.Float64("mouse-sens", 500.0, "Mouse movement sensitivity divisor (lower = more sensitive)")
 	flags.String("overlay-dir", "overlays", "Directory containing Input Overlay presets (relative to executable)")
+	flags.String("keyboard-dir", "keyboards", "Directory containing keyboard layout files (relative to executable)")
 	flags.String("sdl-db", "gamecontrollerdb.txt", "SDL GameControllerDB filename (relative to executable)")
 	flags.String("log-level", "info", "Log level: debug, info, warn, error")
 
@@ -51,6 +53,7 @@ func Load(exeDir string) (Config, error) {
 	v.SetDefault("deadzone", 0.05)
 	v.SetDefault("mouse-sens", 500.0)
 	v.SetDefault("overlay-dir", "overlays")
+	v.SetDefault("keyboard-dir", "keyboards")
 	v.SetDefault("sdl-db", "gamecontrollerdb.txt")
 	v.SetDefault("log-level", "info")
 

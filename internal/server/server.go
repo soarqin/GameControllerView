@@ -43,12 +43,13 @@ type Server struct {
 	gzipCache   map[string][]byte
 	exeDir      string
 	overlayDir  string
+	keyboardDir string
 	addr        string
 	httpServer  *http.Server
 	startTime   time.Time
 }
 
-func New(h *hub.Hub, b *hub.Broadcaster, r *gamepad.Reader, sensSetter hub.MouseSensitivitySetter, frontendFS fs.FS, gzipCache map[string][]byte, exeDir string, overlayDir string, addr string) *Server {
+func New(h *hub.Hub, b *hub.Broadcaster, r *gamepad.Reader, sensSetter hub.MouseSensitivitySetter, frontendFS fs.FS, gzipCache map[string][]byte, exeDir string, overlayDir string, keyboardDir string, addr string) *Server {
 	return &Server{
 		hub:         h,
 		broadcaster: b,
@@ -58,6 +59,7 @@ func New(h *hub.Hub, b *hub.Broadcaster, r *gamepad.Reader, sensSetter hub.Mouse
 		gzipCache:   gzipCache,
 		exeDir:      exeDir,
 		overlayDir:  overlayDir,
+		keyboardDir: keyboardDir,
 		addr:        addr,
 		startTime:   time.Now(),
 	}
@@ -87,6 +89,13 @@ func (s *Server) ListenAndServe() error {
 	if info, err := os.Stat(overlaysDir); err == nil && info.IsDir() {
 		slog.Info("serving external overlays", "dir", overlaysDir)
 		mux.Handle("/overlays/", http.StripPrefix("/overlays/", http.FileServer(http.Dir(overlaysDir))))
+	}
+
+	// External keyboards directory (next to the executable): /keyboards/
+	keyboardsDir := filepath.Join(s.exeDir, s.keyboardDir)
+	if info, err := os.Stat(keyboardsDir); err == nil && info.IsDir() {
+		slog.Debug("serving external keyboards", "dir", keyboardsDir)
+		mux.Handle("/keyboards/", http.StripPrefix("/keyboards/", http.FileServer(http.Dir(keyboardsDir))))
 	}
 
 	// Static files (frontend) with gzip-aware serving.

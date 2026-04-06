@@ -17,6 +17,9 @@
 # Directory containing Input Overlay presets, relative to executable (default: overlays)
 # overlay-dir = "overlays"
 
+# Directory containing keyboard layout files, relative to executable (default: keyboards)
+# keyboard-dir = "keyboards"
+
 # SDL GameControllerDB filename, relative to executable (default: gamecontrollerdb.txt)
 # sdl-db = "gamecontrollerdb.txt"
 

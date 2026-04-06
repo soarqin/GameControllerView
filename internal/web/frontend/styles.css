@@ -68,6 +68,26 @@ body {
     justify-content: center;
 }
 
+#device-container {
+    display: flex;
+    flex-wrap: wrap;
+    justify-content: center;
+    align-items: flex-start;
+    gap: 16px;
+    padding: 16px;
+}
+
+#device-container.simple-mode {
+    padding: 0;
+    align-items: center;
+    height: 100vh;
+}
+
+.device-canvas {
+    display: block;
+    max-width: 100%;
+}
+
 #gamepad-canvas {
     background-color: #16213e;
     border-radius: 12px;

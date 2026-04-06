@@ -73,6 +73,25 @@ let kmSubscribed = false;
 // Dirty flag: set to true whenever state changes. render() only redraws when dirty.
 let dirty = true;
 
+let activeRenderers = [];
+let explicitMode = false;
+let hasGamepadParam = false;
+let hasMouseParam = false;
+let keyboardParam = null;
+let forcedGamepadType = null;
+
+function markRendererDirty(types) {
+    for (const renderer of activeRenderers) {
+        if (types.includes(renderer.type)) renderer.dirty = true;
+    }
+}
+
+function enforceForcedGamepadType() {
+    if (explicitMode && forcedGamepadType && forcedGamepadType !== 'true' && forcedGamepadType !== '') {
+        state.controllerType = forcedGamepadType;
+    }
+}
+
 // ============================================================
 // WebSocket Connection
 // ============================================================
@@ -92,7 +111,7 @@ function connectWebSocket() {
         setWSStatus(true);
         // Send selected player index to backend, unless the overlay has no gamepad elements
         // (in that case we don't need gamepad data at all).
-        if (overlayName === null || overlayHasGamepad) {
+        if ((overlayName === null && (!explicitMode || hasGamepadParam)) || (overlayName !== null && overlayHasGamepad)) {
             ws.send(JSON.stringify({ type: 'select_player', playerIndex: selectedPlayerIndex }));
         }
 
@@ -103,6 +122,11 @@ function connectWebSocket() {
 
         // Re-subscribe to keyboard/mouse if we already determined that the overlay needs it
         if (kmSubscribed) {
+            ws.send(JSON.stringify({ type: 'subscribe_km' }));
+        }
+
+        if (explicitMode && (hasMouseParam || keyboardParam !== null) && !kmSubscribed) {
+            kmSubscribed = true;
             ws.send(JSON.stringify({ type: 'subscribe_km' }));
         }
     };
@@ -202,6 +226,7 @@ function applyKMFull(data) {
     kmState.wheelUp = false;
     kmState.wheelDown = false;
     dirty = true;
+    markRendererDirty(['mouse', 'keyboard']);
 }
 
 // Apply an incremental keyboard/mouse delta.
@@ -226,6 +251,7 @@ function applyKMDelta(delta) {
         kmState.wheelTimestamp = performance.now();
     }
     dirty = true;
+    markRendererDirty(['mouse', 'keyboard']);
 }
 
 // Merge gamepad state fields. For delta messages some fields may be absent (undefined).
@@ -256,16 +282,20 @@ function mergeState(target, source) {
 
 function applyFullState(data) {
     mergeState(state, data);
+    enforceForcedGamepadType();
     updateControllerInfo();
     loadConfigIfNeeded();
     dirty = true;
+    markRendererDirty(['gamepad']);
 }
 
 function applyDelta(changes) {
     mergeState(state, changes);
+    enforceForcedGamepadType();
     updateControllerInfo();
     loadConfigIfNeeded();
     dirty = true;
+    markRendererDirty(['gamepad']);
 }
 
 function updateControllerInfo() {
@@ -286,9 +316,20 @@ function updateControllerInfo() {
 
 let loadedConfigType = '';
 
+function configNameForType(type) {
+    const configMap = {
+        'xbox': 'xbox',
+        'playstation': 'playstation',
+        'playstation5': 'playstation',
+        'switch_pro': 'switch_pro',
+    };
+    return configMap[type] || 'xbox';
+}
+
 function loadConfigIfNeeded() {
     // In Input Overlay mode, skip built-in config loading
     if (overlayName !== null) return;
+    if (explicitMode && !hasGamepadParam) return;
 
     const type = state.controllerType || 'xbox';
     if (type === loadedConfigType) return;
@@ -300,13 +341,7 @@ function loadConfigIfNeeded() {
         return;
     }
 
-    const configMap = {
-        'xbox': 'xbox',
-        'playstation': 'playstation',
-        'playstation5': 'playstation',
-        'switch_pro': 'switch_pro',
-    };
-    const configName = configMap[type] || 'xbox';
+    const configName = configNameForType(type);
 
     fetch(`configs/${configName}.json`)
         .then(r => {
@@ -317,6 +352,7 @@ function loadConfigIfNeeded() {
             configCache[type] = config;
             currentConfig = config;
             dirty = true;
+            markRendererDirty(['gamepad']);
         })
         .catch(e => {
             console.warn('Config load failed:', configName, e);
@@ -647,7 +683,7 @@ function drawInputOverlay() {
 // ============================================================
 
 const canvas = document.getElementById('gamepad-canvas');
-const ctx = canvas.getContext('2d');
+let ctx = canvas.getContext('2d');
 
 // Logical canvas dimensions.
 // In geometric mode: fixed CANVAS_WIDTH × CANVAS_HEIGHT.
@@ -722,23 +758,105 @@ function setupCanvas() {
     dirty = true;
 }
 
-function render() {
-    if (dirty) {
-        dirty = false;
-        ctx.clearRect(0, 0, canvasW, canvasH);
+function setupRendererNormal(renderer) {
+    const dpr = window.devicePixelRatio || 1;
+    const cssWidth = renderer.canvas.getBoundingClientRect().width || renderer.canvasW;
+    const scale = cssWidth / renderer.canvasW;
+    const cssHeight = renderer.canvasH * scale;
+    renderer.canvas.style.height = cssHeight + 'px';
+    renderer.canvas.width = cssWidth * dpr;
+    renderer.canvas.height = cssHeight * dpr;
+    renderer.ctx.setTransform(dpr * scale, 0, 0, dpr * scale, 0, 0);
+    renderer.dirty = true;
+}
 
-        if (overlayName !== null) {
-            const canRender = state.connected || !overlayHasGamepad;
-            if (!canRender) {
-                if (!simpleMode) drawDisconnected();
-            } else {
-                drawInputOverlay();
-            }
+function setupRendererCanvas(renderer) {
+    const dpr = window.devicePixelRatio || 1;
+    if (simpleMode) {
+        const vw = window.innerWidth;
+        const vh = window.innerHeight;
+        if (activeRenderers.length === 1) {
+            renderer.canvas.style.width = vw + 'px';
+            renderer.canvas.style.height = vh + 'px';
+            renderer.canvas.width = vw * dpr;
+            renderer.canvas.height = vh * dpr;
+            const scale = Math.min(vw / renderer.canvasW, vh / renderer.canvasH);
+            const offsetX = (vw - renderer.canvasW * scale) / 2;
+            const offsetY = (vh - renderer.canvasH * scale) / 2;
+            renderer.ctx.setTransform(dpr * scale, 0, 0, dpr * scale, dpr * offsetX, dpr * offsetY);
         } else {
-            if (!state.connected) {
-                if (!simpleMode) drawDisconnected();
+            setupRendererNormal(renderer);
+        }
+    } else {
+        setupRendererNormal(renderer);
+    }
+    renderer.dirty = true;
+}
+
+function drawGamepadRenderer(renderer) {
+    const savedCtx = ctx;
+    const savedW = canvasW;
+    const savedH = canvasH;
+    ctx = renderer.ctx;
+    canvasW = renderer.canvasW;
+    canvasH = renderer.canvasH;
+    if (!state.connected) {
+        if (!simpleMode) drawDisconnected();
+    } else {
+        drawController();
+    }
+    ctx = savedCtx;
+    canvasW = savedW;
+    canvasH = savedH;
+}
+
+function drawMouseRenderer(renderer) {
+    renderer.ctx.fillStyle = COLORS.buttonDefault;
+    renderer.ctx.fillRect(0, 0, renderer.canvasW, renderer.canvasH);
+    renderer.ctx.fillStyle = COLORS.buttonPressed;
+    renderer.ctx.font = '14px "Segoe UI", sans-serif';
+    renderer.ctx.textAlign = 'center';
+    renderer.ctx.textBaseline = 'middle';
+    renderer.ctx.fillText('Mouse', renderer.canvasW / 2, renderer.canvasH / 2);
+}
+
+function drawKeyboardRenderer(renderer) {
+    renderer.ctx.fillStyle = COLORS.buttonDefault;
+    renderer.ctx.fillRect(0, 0, renderer.canvasW, renderer.canvasH);
+    renderer.ctx.fillStyle = COLORS.buttonPressed;
+    renderer.ctx.font = '14px "Segoe UI", sans-serif';
+    renderer.ctx.textAlign = 'center';
+    renderer.ctx.textBaseline = 'middle';
+    renderer.ctx.fillText('Keyboard', renderer.canvasW / 2, renderer.canvasH / 2);
+}
+
+function render() {
+    if (activeRenderers.length > 0) {
+        for (const renderer of activeRenderers) {
+            if (renderer.dirty) {
+                renderer.dirty = false;
+                renderer.ctx.clearRect(0, 0, renderer.canvasW, renderer.canvasH);
+                renderer.draw(renderer);
+            }
+        }
+    } else {
+        if (dirty) {
+            dirty = false;
+            ctx.clearRect(0, 0, canvasW, canvasH);
+
+            if (overlayName !== null) {
+                const canRender = state.connected || !overlayHasGamepad;
+                if (!canRender) {
+                    if (!simpleMode) drawDisconnected();
+                } else {
+                    drawInputOverlay();
+                }
             } else {
-                drawController();
+                if (!state.connected) {
+                    if (!simpleMode) drawDisconnected();
+                } else {
+                    drawController();
+                }
             }
         }
     }
@@ -1187,6 +1305,21 @@ function init() {
     }
 
     const overlayParam = urlParams.get('overlay');
+    hasGamepadParam = urlParams.has('gamepad');
+    hasMouseParam = urlParams.get('mouse') === '1';
+    keyboardParam = urlParams.get('keyboard');
+    forcedGamepadType = urlParams.get('gamepad');
+    explicitMode = hasGamepadParam || hasMouseParam || (keyboardParam !== null);
+
+    if (overlayParam && explicitMode) {
+        console.warn('[InputView] ?overlay= and ?gamepad/?mouse/?keyboard cannot be combined. Ignoring gamepad/mouse/keyboard params.');
+        explicitMode = false;
+        hasGamepadParam = false;
+        hasMouseParam = false;
+        keyboardParam = null;
+        forcedGamepadType = null;
+    }
+
     if (overlayParam) {
         overlayName = overlayParam;
         // Optimistically hide gamepad UI until the config tells us it's needed.
@@ -1216,18 +1349,101 @@ function init() {
         if (app) { app.style.padding = '0'; app.style.maxWidth = 'none'; }
     }
 
+    if (explicitMode && !overlayParam) {
+        const container = document.getElementById('device-container');
+        container.style.display = 'flex';
+        if (simpleMode) container.classList.add('simple-mode');
+
+        canvas.style.display = 'none';
+
+        if (!hasGamepadParam) {
+            const playerInfo = document.getElementById('player-info');
+            const controllerInfo = document.getElementById('controller-info');
+            const statusEl = document.getElementById('status');
+            if (playerInfo) playerInfo.style.display = 'none';
+            if (controllerInfo) controllerInfo.style.display = 'none';
+            if (statusEl) statusEl.style.display = 'none';
+        }
+
+        if (hasGamepadParam) {
+            const gamepadCanvas = document.createElement('canvas');
+            gamepadCanvas.className = 'device-canvas';
+            gamepadCanvas.dataset.device = 'gamepad';
+            gamepadCanvas.width = 500;
+            gamepadCanvas.height = 330;
+            container.appendChild(gamepadCanvas);
+            activeRenderers.push({
+                canvas: gamepadCanvas,
+                ctx: gamepadCanvas.getContext('2d'),
+                canvasW: 500,
+                canvasH: 330,
+                dirty: true,
+                draw: drawGamepadRenderer,
+                type: 'gamepad'
+            });
+        }
+
+        if (hasMouseParam) {
+            const mouseCanvas = document.createElement('canvas');
+            mouseCanvas.className = 'device-canvas';
+            mouseCanvas.dataset.device = 'mouse';
+            mouseCanvas.width = 160;
+            mouseCanvas.height = 270;
+            container.appendChild(mouseCanvas);
+            activeRenderers.push({
+                canvas: mouseCanvas,
+                ctx: mouseCanvas.getContext('2d'),
+                canvasW: 160,
+                canvasH: 270,
+                dirty: true,
+                draw: drawMouseRenderer,
+                type: 'mouse'
+            });
+        }
+
+        if (keyboardParam !== null) {
+            const keyboardCanvas = document.createElement('canvas');
+            keyboardCanvas.className = 'device-canvas';
+            keyboardCanvas.dataset.device = 'keyboard';
+            keyboardCanvas.width = 400;
+            keyboardCanvas.height = 240;
+            container.appendChild(keyboardCanvas);
+            activeRenderers.push({
+                canvas: keyboardCanvas,
+                ctx: keyboardCanvas.getContext('2d'),
+                canvasW: 400,
+                canvasH: 240,
+                dirty: true,
+                draw: drawKeyboardRenderer,
+                type: 'keyboard',
+                configName: keyboardParam
+            });
+        }
+
+        setTimeout(() => {
+            for (const renderer of activeRenderers) setupRendererCanvas(renderer);
+        }, 0);
+    }
+
     setupCanvas();
-    window.addEventListener('resize', setupCanvas);
+    window.addEventListener('resize', () => {
+        setupCanvas();
+        for (const renderer of activeRenderers) setupRendererCanvas(renderer);
+    });
 
     // Preload default xbox config (only in geometric mode)
-    if (overlayName === null) {
-        fetch('configs/xbox.json')
+    if (overlayName === null && (!explicitMode || hasGamepadParam)) {
+        if (explicitMode) enforceForcedGamepadType();
+        const preloadType = (explicitMode && forcedGamepadType && forcedGamepadType !== 'true' && forcedGamepadType !== '') ? forcedGamepadType : 'xbox';
+        const preloadConfigName = configNameForType(preloadType);
+        fetch(`configs/${preloadConfigName}.json`)
             .then(r => r.json())
             .then(config => {
-                configCache['xbox'] = config;
+                configCache[preloadType] = config;
                 currentConfig = config;
-                loadedConfigType = 'xbox';
+                loadedConfigType = preloadType;
                 dirty = true;
+                markRendererDirty(['gamepad']);
             })
             .catch(e => console.error('Failed to load default config:', e));
     }

@@ -43,6 +43,9 @@ No external DLL required. Gamepad input uses XInput (`xinput1_4.dll`, built into
 | `simple` | Simple mode (transparent background, no UI) | `?simple=1` |
 | `alpha` | Gamepad opacity (0.0-1.0) | `?alpha=0.5` |
 | `overlay` | Input Overlay config name or variant path (enables texture-atlas renderer) | `?overlay=dualsense`, `?overlay=dualsense/compact` |
+| `gamepad` | Explicit built-in gamepad renderer; optional value forces type | `?gamepad`, `?gamepad=xbox` |
+| `mouse` | Enable built-in mouse canvas in explicit multi-canvas mode | `?mouse=1` |
+| `keyboard` | Enable built-in keyboard canvas placeholder in explicit multi-canvas mode | `?keyboard=wasd` |
 | `mouse_sens` | Mouse movement sensitivity divisor (default 500; lower = more sensitive) | `?mouse_sens=300` |
 
 ## Project Structure
@@ -419,7 +422,16 @@ The system tray provides menu access when running in GUI mode (double-clicked ex
 
 ### Input Overlay Rendering
 
-Two rendering engines coexist in `app.js`, selected by the `?overlay=` URL parameter:
+`app.js` now supports two top-level frontend architectures:
+
+| URL Mode | DOM / Renderer |
+|----------|----------------|
+| Legacy (no `?gamepad/?mouse/?keyboard`) | Original single `#gamepad-canvas` code path, unchanged |
+| Explicit multi-canvas (`?gamepad`, `?mouse=1`, `?keyboard=name`) | Dynamic canvases inside `#device-container`, one renderer object per device |
+
+`activeRenderers` entries have the shape `{ canvas, ctx, canvasW, canvasH, dirty, draw, type }`. When `activeRenderers.length === 0`, `render()` falls back to the original legacy single-canvas flow.
+
+Two rendering engines still coexist inside that architecture, selected by the `?overlay=` URL parameter:
 
 | Mode | Renderer |
 |------|----------|
@@ -432,13 +444,19 @@ Two rendering engines coexist in `app.js`, selected by the `?overlay=` URL param
 
 **Canvas sizing**: In overlay mode, `canvasW`/`canvasH` are set to `overlay_width`/`overlay_height` from the config once loaded. In simple mode (`?simple=1`) the canvas is stretched to fill the viewport while preserving aspect ratio. In geometric/overlay non-simple mode, `setupCanvas()` reads the CSS-constrained width via `getBoundingClientRect()`, derives height from `canvasH * scale` to preserve aspect ratio, and applies `ctx.setTransform(dpr * scale, 0, 0, dpr * scale, 0, 0)` so that drawing coordinates always stay in the `[0, canvasW] × [0, canvasH]` logical space — this prevents content clipping when `max-width: 100%` CSS causes the canvas element to be narrower than the overlay's native dimensions. In geometric mode the canvas stays at the fixed 500×330 logical size.
 
-**Dirty-flag rendering**: `render()` only redraws the canvas when `dirty = true`. The flag is set whenever WebSocket state changes arrive (`applyFullState`, `applyDelta`, `applyKMFull`, `applyKMDelta`) or when assets finish loading. This eliminates unnecessary GPU work at idle (~60 draws/sec → 0 when nothing changes).
+**Explicit multi-canvas sizing**: `setupRendererCanvas(renderer)` handles the new explicit-mode canvases. Single-canvas simple mode still fills the viewport; multi-canvas simple mode falls back to natural per-device sizing so CSS flex-wrap can lay out multiple canvases cleanly. `setupRendererNormal(renderer)` preserves each renderer's logical aspect ratio from its own `canvasW`/`canvasH`.
+
+**Dirty-flag rendering**: Legacy mode still uses the global `dirty` flag. Explicit mode adds per-renderer dirty flags so gamepad updates only dirty gamepad canvases, while `km_full` / `km_delta` also dirty the mouse and keyboard canvases.
 
 **Overlay element sorting**: `cfg.elements` are sorted by `z_level` once when the config JSON is loaded (`loadInputOverlayConfig`), not on every animation frame. The sorted array is mutated in-place on the `overlayConfig` object.
 
 **Simple mode** (`?simple=1`): makes the page background transparent. In Input Overlay mode, type=0 static texture elements (controller body) are always rendered — the controller outline is part of the atlas, not the page background.
 
 **Keyboard/mouse-only overlays**: if the config contains no gamepad element types (2/5/6/7/8), the Player info bar and controller status bar are hidden, `select_player` is not sent, and rendering starts immediately without waiting for a gamepad connection.
+
+**Overlay mutual exclusion**: `?overlay=` cannot be combined with `?gamepad`, `?mouse`, or `?keyboard`. If both appear, the frontend logs `console.warn(...)`, ignores the explicit multi-canvas params, and continues with overlay mode only.
+
+**Explicit built-in KM subscription**: In explicit mode, `subscribe_km` is sent on WebSocket open whenever the mouse renderer or keyboard renderer is active, even without an Input Overlay config.
 
 **Texture atlas loading**: The texture atlas is loaded from `overlays/<dir>/<dir>.png`. If the PNG is not found, the loader automatically falls back to `overlays/<dir>/<dir>.svg`. Both formats are rendered via `HTMLImageElement` + `ctx.drawImage()`, so SVG atlases work without additional processing.
 

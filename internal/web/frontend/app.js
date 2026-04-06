@@ -1694,6 +1694,7 @@ function init() {
     updateBodyFillColor();
 
     if (simpleMode) {
+        document.body.classList.add('simple-mode');
         document.body.style.backgroundColor = 'transparent';
         canvas.style.backgroundColor = 'transparent';
         canvas.style.border = 'none';

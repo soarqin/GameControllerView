@@ -52,7 +52,8 @@ http://localhost:8080
 |-----------|-------------|---------|---------|
 | `p` | Gamepad number (1-based) | `1` | `?p=2` |
 | `simple` | Transparent background, no UI | off | `?simple=1` |
-| `alpha` | Gamepad body opacity (0.0–1.0) | `1.0` | `?alpha=0.5` |
+| `alpha` | Body/background opacity for gamepad, mouse, and keyboard (0.0–1.0) | `1.0` | `?alpha=0.5` |
+| `btnalpha` | Button/key opacity for built-in keyboard and mouse renderers (0.0–1.0) | `1.0` | `?btnalpha=0.7` |
 | `overlay` | Input Overlay preset name | — | `?overlay=dualsense` |
 | `gamepad` | Built-in gamepad renderer; optional value forces controller type | — | `?gamepad`, `?gamepad=xbox` |
 | `mouse` | Built-in mouse renderer (explicit multi-canvas mode) | — | `?mouse=1` |

@@ -41,7 +41,8 @@ No external DLL required. Gamepad input uses XInput (`xinput1_4.dll`, built into
 |-----------|-------------|---------|
 | `p` | Gamepad number (1-based, default 1) | `?p=2` |
 | `simple` | Simple mode (transparent background, no UI) | `?simple=1` |
-| `alpha` | Gamepad opacity (0.0-1.0) | `?alpha=0.5` |
+| `alpha` | Body/background opacity for gamepad, mouse, and keyboard (0.0-1.0) | `?alpha=0.5` |
+| `btnalpha` | Button/key opacity for built-in keyboard and mouse renderers (0.0-1.0) | `?btnalpha=0.7` |
 | `overlay` | Input Overlay config name or variant path (enables texture-atlas renderer) | `?overlay=dualsense`, `?overlay=dualsense/compact` |
 | `gamepad` | Explicit built-in gamepad renderer; optional value forces type | `?gamepad`, `?gamepad=xbox` |
 | `mouse` | Enable built-in mouse canvas in explicit multi-canvas mode | `?mouse=1` |
@@ -458,6 +459,8 @@ The system tray provides menu access when running in GUI mode (double-clicked ex
 
 When any of `?gamepad`, `?mouse`, or `?keyboard` URL params are present, the frontend enters **explicit mode**:
 - Each device gets an independent `<canvas class="device-canvas">` element inside `#device-container`
+- **Canvas ordering**: Canvases are created in the order their URL parameters appear in the query string. For example, `?keyboard=wasd&gamepad&mouse=1` renders keyboard on the left, gamepad in the middle, mouse on the right. The raw query string is parsed to determine parameter order (not `URLSearchParams` iteration order).
+- **Vertical alignment**: Each device canvas is vertically centered within the flex container (`align-items: center`), so devices with different heights (e.g. a tall keyboard next to a short mouse) align at their midpoints.
 - CSS flexbox arranges canvases (wrapping, centered, 16px gap)
 - Each canvas has its own logical dimensions: gamepad 500×330, mouse 160×270, keyboard (computed from config)
 - A per-renderer dirty flag avoids unnecessary redraws — gamepad updates only dirty the gamepad canvas; `km_full`/`km_delta` dirty the mouse and keyboard canvases

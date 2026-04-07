@@ -26,6 +26,8 @@ const keyboardConfigCache = {};
 let simpleMode = false;
 // Body alpha channel (0-1)
 let bodyAlpha = 1.0;
+// Button/key alpha channel (0-1), controlled by ?btnalpha= URL param
+let buttonAlpha = 1.0;
 // Selected player index (1-based, default 1)
 let selectedPlayerIndex = 1;
 // Mouse sensitivity divisor (sent to backend after connect)
@@ -863,13 +865,19 @@ const COLORS = {
     faceY: '#fbbf24',
 };
 
-// Pre-computed body fill color (recalculated when bodyAlpha changes)
+function hexToRgba(hex, alpha) {
+    const r = parseInt(hex.slice(1, 3), 16);
+    const g = parseInt(hex.slice(3, 5), 16);
+    const b = parseInt(hex.slice(5, 7), 16);
+    return `rgba(${r},${g},${b},${alpha})`;
+}
+
+// Pre-computed fill colors (recalculated when bodyAlpha changes)
 let bodyFillColor = '';
+let kbBgFillColor = '';
 function updateBodyFillColor() {
-    const r = parseInt(COLORS.outlineFill.slice(1, 3), 16);
-    const g = parseInt(COLORS.outlineFill.slice(3, 5), 16);
-    const b = parseInt(COLORS.outlineFill.slice(5, 7), 16);
-    bodyFillColor = `rgba(${r},${g},${b},${bodyAlpha})`;
+    bodyFillColor = hexToRgba(COLORS.outlineFill, bodyAlpha);
+    kbBgFillColor = hexToRgba(COLORS.bg, bodyAlpha);
 }
 
 // High-DPI canvas setup
@@ -997,6 +1005,8 @@ function drawMouseRenderer(renderer) {
     c.restore();
 
     // Mouse buttons (middle button skipped — drawn together with scroll wheel below)
+    c.save();
+    c.globalAlpha = buttonAlpha;
     const savedCtx = ctx;
     for (const [name, btn] of Object.entries(cfg.buttons)) {
         if (name === 'middle') continue;
@@ -1025,15 +1035,16 @@ function drawMouseRenderer(renderer) {
     const wheelActive = (kmState.wheelUp || kmState.wheelDown) &&
         (performance.now() - kmState.wheelTimestamp <= WHEEL_TIMEOUT_MS);
 
-    // Middle button background
+    // Middle button border area (fill excludes wheel region to prevent overlap darkening)
     c.fillStyle = middlePressed ? COLORS.buttonPressed : COLORS.buttonDefault;
+    c.beginPath();
+    c.roundRect(mb.x, mb.y, mb.width, mb.height, mb.radius);
+    c.roundRect(w.x, w.y, w.width, w.height, w.radius);
+    c.fill('evenodd');
     c.strokeStyle = COLORS.outline;
     c.lineWidth = 1.5;
-    const savedCtx2 = ctx;
-    ctx = c;
-    drawRoundRect(mb.x, mb.y, mb.width, mb.height, mb.radius);
-    ctx = savedCtx2;
-    c.fill();
+    c.beginPath();
+    c.roundRect(mb.x, mb.y, mb.width, mb.height, mb.radius);
     c.stroke();
 
     // Scroll wheel indicator (on top of middle button)
@@ -1143,6 +1154,7 @@ function drawMouseRenderer(renderer) {
         );
         c.stroke();
     }
+    c.restore();
 }
 
 function computeKeyboardLayout(config) {
@@ -1206,10 +1218,12 @@ function drawKeyboardRenderer(renderer) {
     const c = renderer.ctx;
     const keySize = cfg.keySize || 40;
 
-    c.fillStyle = COLORS.bg;
+    c.fillStyle = kbBgFillColor;
     c.fillRect(0, 0, renderer.canvasW, renderer.canvasH);
 
     const savedCtx = ctx;
+    c.save();
+    c.globalAlpha = buttonAlpha;
     for (const key of renderer.keyboardLayout) {
         const pressed = key.scancode !== undefined && kmState.keys[key.scancode] === true;
 
@@ -1235,6 +1249,7 @@ function drawKeyboardRenderer(renderer) {
 
         c.fillText(key.label, key.x + key.w / 2, key.y + key.h / 2);
     }
+    c.restore();
     ctx = savedCtx;
 }
 
@@ -1712,6 +1727,12 @@ function init() {
         if (!isNaN(alpha) && alpha >= 0 && alpha <= 1) bodyAlpha = alpha;
     }
 
+    const btnAlphaParam = urlParams.get('btnalpha');
+    if (btnAlphaParam !== null) {
+        const ba = parseFloat(btnAlphaParam);
+        if (!isNaN(ba) && ba >= 0 && ba <= 1) buttonAlpha = ba;
+    }
+
     const overlayParam = urlParams.get('overlay');
     hasGamepadParam = urlParams.has('gamepad');
     hasMouseParam = urlParams.get('mouse') === '1';
@@ -1772,59 +1793,72 @@ function init() {
             if (statusEl) statusEl.style.display = 'none';
         }
 
-        if (hasGamepadParam) {
-            const gamepadCanvas = document.createElement('canvas');
-            gamepadCanvas.className = 'device-canvas';
-            gamepadCanvas.dataset.device = 'gamepad';
-            gamepadCanvas.width = 500;
-            gamepadCanvas.height = 330;
-            container.appendChild(gamepadCanvas);
-            activeRenderers.push({
-                canvas: gamepadCanvas,
-                ctx: gamepadCanvas.getContext('2d'),
-                canvasW: 500,
-                canvasH: 330,
-                dirty: true,
-                draw: drawGamepadRenderer,
-                type: 'gamepad'
-            });
+        // Determine the order of device params as they appear in the URL query string.
+        // This lets users control left-to-right layout via param order, e.g.
+        // ?keyboard=wasd&gamepad&mouse=1  →  keyboard | gamepad | mouse
+        const deviceOrder = [];
+        const rawQuery = window.location.search.substring(1); // strip leading '?'
+        const seen = new Set();
+        for (const part of rawQuery.split('&')) {
+            const key = decodeURIComponent(part.split('=')[0]);
+            if (seen.has(key)) continue;
+            seen.add(key);
+            if (key === 'gamepad' && hasGamepadParam) deviceOrder.push('gamepad');
+            else if (key === 'mouse' && hasMouseParam) deviceOrder.push('mouse');
+            else if (key === 'keyboard' && keyboardParam !== null) deviceOrder.push('keyboard');
         }
 
-        if (hasMouseParam) {
-            const mouseCanvas = document.createElement('canvas');
-            mouseCanvas.className = 'device-canvas';
-            mouseCanvas.dataset.device = 'mouse';
-            mouseCanvas.width = 160;
-            mouseCanvas.height = 270;
-            container.appendChild(mouseCanvas);
-            activeRenderers.push({
-                canvas: mouseCanvas,
-                ctx: mouseCanvas.getContext('2d'),
-                canvasW: 160,
-                canvasH: 270,
-                dirty: true,
-                draw: drawMouseRenderer,
-                type: 'mouse'
-            });
-        }
-
-        if (keyboardParam !== null) {
-            const keyboardCanvas = document.createElement('canvas');
-            keyboardCanvas.className = 'device-canvas';
-            keyboardCanvas.dataset.device = 'keyboard';
-            keyboardCanvas.width = 400;
-            keyboardCanvas.height = 240;
-            container.appendChild(keyboardCanvas);
-            activeRenderers.push({
-                canvas: keyboardCanvas,
-                ctx: keyboardCanvas.getContext('2d'),
-                canvasW: 400,
-                canvasH: 240,
-                dirty: true,
-                draw: drawKeyboardRenderer,
-                type: 'keyboard',
-                configName: keyboardParam
-            });
+        for (const device of deviceOrder) {
+            if (device === 'gamepad') {
+                const gamepadCanvas = document.createElement('canvas');
+                gamepadCanvas.className = 'device-canvas';
+                gamepadCanvas.dataset.device = 'gamepad';
+                gamepadCanvas.width = 500;
+                gamepadCanvas.height = 330;
+                container.appendChild(gamepadCanvas);
+                activeRenderers.push({
+                    canvas: gamepadCanvas,
+                    ctx: gamepadCanvas.getContext('2d'),
+                    canvasW: 500,
+                    canvasH: 330,
+                    dirty: true,
+                    draw: drawGamepadRenderer,
+                    type: 'gamepad'
+                });
+            } else if (device === 'mouse') {
+                const mouseCanvas = document.createElement('canvas');
+                mouseCanvas.className = 'device-canvas';
+                mouseCanvas.dataset.device = 'mouse';
+                mouseCanvas.width = 160;
+                mouseCanvas.height = 270;
+                container.appendChild(mouseCanvas);
+                activeRenderers.push({
+                    canvas: mouseCanvas,
+                    ctx: mouseCanvas.getContext('2d'),
+                    canvasW: 160,
+                    canvasH: 270,
+                    dirty: true,
+                    draw: drawMouseRenderer,
+                    type: 'mouse'
+                });
+            } else if (device === 'keyboard') {
+                const keyboardCanvas = document.createElement('canvas');
+                keyboardCanvas.className = 'device-canvas';
+                keyboardCanvas.dataset.device = 'keyboard';
+                keyboardCanvas.width = 400;
+                keyboardCanvas.height = 240;
+                container.appendChild(keyboardCanvas);
+                activeRenderers.push({
+                    canvas: keyboardCanvas,
+                    ctx: keyboardCanvas.getContext('2d'),
+                    canvasW: 400,
+                    canvasH: 240,
+                    dirty: true,
+                    draw: drawKeyboardRenderer,
+                    type: 'keyboard',
+                    configName: keyboardParam
+                });
+            }
         }
 
         setTimeout(() => {

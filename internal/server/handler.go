@@ -73,6 +73,13 @@ func handleWebSocket(h *hub.Hub, b *hub.Broadcaster, reader *gamepad.Reader, sen
 		}
 		// ReadLoop drives the event loop (OnOpen, OnMessage, OnClose).
 		// Run in a goroutine so the HTTP handler returns immediately.
-		go socket.ReadLoop()
+		go func() {
+			defer func() {
+				if p := recover(); p != nil {
+					slog.Error("panic in WebSocket ReadLoop", "panic", p)
+				}
+			}()
+			socket.ReadLoop()
+		}()
 	}
 }

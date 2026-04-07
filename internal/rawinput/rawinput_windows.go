@@ -280,6 +280,8 @@ func (r *Reader) RegisterHIDCallback(usagePage, usage uint16, inputCb HIDInputCa
 	select {
 	case <-r.hwndReady:
 		// Window exists — register this usage right now.
+		// r.hwnd is written exactly once before hwndReady is closed, so the
+		// read here is safe (close provides a happens-before guarantee).
 		hwnd := r.hwnd
 		if hwnd != 0 {
 			dev := rawInputDevice{

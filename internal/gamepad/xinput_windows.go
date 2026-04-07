@@ -29,8 +29,8 @@ var (
 	// Ordinal-based procs resolved via GetProcAddress(hModule, MAKEINTRESOURCE(ordinal)).
 	// syscall.LazyProc does not support ordinal lookup ("#100" is treated as a literal name),
 	// so these are resolved manually at init time.
-	addrXInputGetStateEx        uintptr // ordinal 100: includes Guide button
-	addrXInputGetCapabilitiesEx uintptr // ordinal 108: includes VID/PID (undocumented, Win8+)
+	addrXInputGetStateEx        uintptr
+	addrXInputGetCapabilitiesEx uintptr
 )
 
 func init() {
@@ -42,8 +42,8 @@ func init() {
 	// GetProcAddress accepts MAKEINTRESOURCE(ordinal) = uintptr(ordinal) as the proc name
 	// (high word must be 0). These are undocumented APIs present since xinput1_3.dll / xinput1_4.dll.
 	h := modXInput.Handle() // forces DLL load
-	addrXInputGetStateEx = getProcAddressByOrdinal(h, 100)
-	addrXInputGetCapabilitiesEx = getProcAddressByOrdinal(h, 108)
+	addrXInputGetStateEx = getProcAddressByOrdinal(h, xinputOrdinalGetStateEx)
+	addrXInputGetCapabilitiesEx = getProcAddressByOrdinal(h, xinputOrdinalGetCapabilitiesEx)
 }
 
 // loadXInputDLL tries to load the best available XInput DLL.
@@ -60,6 +60,15 @@ func loadXInputDLL() *syscall.LazyDLL {
 
 // xinputMaxControllers is the maximum number of controllers XInput supports simultaneously.
 const xinputMaxControllers = 4
+
+// Undocumented XInput ordinal exports. These are exported by ordinal number only
+// (no named symbol in the DLL) and require direct GetProcAddress with MAKEINTRESOURCE.
+const (
+	// XInputGetStateEx (ordinal 100): like XInputGetState but includes the Guide button bit.
+	xinputOrdinalGetStateEx = 100
+	// XInputGetCapabilitiesEx (ordinal 108): returns VID/PID info (Windows 8+).
+	xinputOrdinalGetCapabilitiesEx = 108
+)
 
 // XInput error codes
 const (

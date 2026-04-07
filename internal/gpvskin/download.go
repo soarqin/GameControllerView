@@ -8,6 +8,7 @@ import (
 	_ "image/jpeg" // register JPEG decoder
 	"image/png"
 	"io"
+	"log/slog"
 	"net/http"
 	"os"
 	"os/exec"
@@ -254,7 +255,11 @@ func downloadFile(url, dest string) error {
 	if err != nil {
 		return fmt.Errorf("create file %s: %w", dest, err)
 	}
-	defer f.Close()
+	defer func() {
+		if cerr := f.Close(); cerr != nil {
+			slog.Warn("close error", "file", dest, "error", cerr)
+		}
+	}()
 	if _, err := io.Copy(f, resp.Body); err != nil {
 		return fmt.Errorf("write %s: %w", dest, err)
 	}
@@ -272,7 +277,11 @@ func copyFile(src, dst string) error {
 	if err != nil {
 		return err
 	}
-	defer out.Close()
+	defer func() {
+		if cerr := out.Close(); cerr != nil {
+			slog.Warn("close error", "file", dst, "error", cerr)
+		}
+	}()
 	_, err = io.Copy(out, in)
 	return err
 }
@@ -294,7 +303,11 @@ func SavePNG(img image.Image, path string) error {
 	if err != nil {
 		return fmt.Errorf("create PNG %s: %w", path, err)
 	}
-	defer f.Close()
+	defer func() {
+		if cerr := f.Close(); cerr != nil {
+			slog.Warn("close error", "file", path, "error", cerr)
+		}
+	}()
 	if err := png.Encode(f, img); err != nil {
 		return fmt.Errorf("encode PNG %s: %w", path, err)
 	}

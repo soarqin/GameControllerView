@@ -66,7 +66,11 @@ func main() {
 
 	// Create and start hub
 	h := hub.NewHub()
-	go h.Run()
+	hubDone := make(chan struct{})
+	go func() {
+		h.Run(ctx)
+		close(hubDone)
+	}()
 
 	// Create Raw Input reader for keyboard and mouse (Windows: global capture via Raw Input API).
 	// Also used as the shared HWND_MESSAGE window for HID gamepad input.
@@ -80,7 +84,11 @@ func main() {
 
 	// Create broadcaster (listens to both gamepad and keyboard/mouse channels)
 	broadcaster := hub.NewBroadcaster(h, reader.Changes(), kmReader.Changes())
-	go broadcaster.Run()
+	broadcasterDone := make(chan struct{})
+	go func() {
+		broadcaster.Run()
+		close(broadcasterDone)
+	}()
 
 	// Create and start HTTP server
 	srv := server.New(h, broadcaster, reader, kmReader, web.FrontendFS(), web.GzipCache(), appExeDir, cfg.OverlayDir, cfg.KeyboardDir, cfg.Addr)
@@ -102,7 +110,11 @@ func main() {
 
 	// Run keyboard/mouse Raw Input reader in a separate goroutine
 	// (also uses LockOSThread internally on Windows for the message loop)
-	go kmReader.Run(ctx)
+	kmReaderDone := make(chan struct{})
+	go func() {
+		kmReader.Run(ctx)
+		close(kmReaderDone)
+	}()
 
 	// Wait for any shutdown trigger
 	if extraShutdownCh != nil {
@@ -126,6 +138,21 @@ func main() {
 
 	// Wait for reader to finish
 	<-readerDone
+	select {
+	case <-kmReaderDone:
+	case <-time.After(5 * time.Second):
+		slog.Warn("timed out waiting for keyboard/mouse reader shutdown")
+	}
+	select {
+	case <-broadcasterDone:
+	case <-time.After(5 * time.Second):
+		slog.Warn("timed out waiting for broadcaster shutdown")
+	}
+	select {
+	case <-hubDone:
+	case <-time.After(5 * time.Second):
+		slog.Warn("timed out waiting for hub shutdown")
+	}
 
 	// Graceful HTTP server shutdown
 	shutdownCtx, shutdownCancel := context.WithTimeout(context.Background(), 5*time.Second)

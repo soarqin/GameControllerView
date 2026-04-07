@@ -1,6 +1,7 @@
 package hub
 
 import (
+	"context"
 	"log/slog"
 	"sync"
 )
@@ -57,9 +58,11 @@ func (h *Hub) BroadcastKeyMouse(msg []byte) {
 }
 
 // Run starts the hub's main loop. Should be run in a goroutine.
-func (h *Hub) Run() {
+func (h *Hub) Run(ctx context.Context) {
 	for {
 		select {
+		case <-ctx.Done():
+			return
 		case client := <-h.register:
 			h.mu.Lock()
 			h.clients[client] = true

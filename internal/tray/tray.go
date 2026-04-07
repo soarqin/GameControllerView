@@ -26,6 +26,7 @@ type Tray struct {
 	shutdownFunc ShutdownFunc
 	once         sync.Once
 	shuttingDown atomic.Bool
+	stopCh       chan struct{}
 	overlays     []overlay.Entry
 	addr         string
 
@@ -48,6 +49,7 @@ type Tray struct {
 func New(shutdownFn ShutdownFunc, overlays []overlay.Entry, addr string) *Tray {
 	return &Tray{
 		shutdownFunc: shutdownFn,
+		stopCh:       make(chan struct{}),
 		overlays:     overlays,
 		addr:         addr,
 	}
@@ -96,12 +98,23 @@ func (t *Tray) onReady(iconData []byte) {
 	openURLCh := make(chan string, 1)
 	for _, ov := range t.openItems {
 		go func(item *systray.MenuItem, urlPath string) {
-			for range item.ClickedCh {
-				if !t.shuttingDown.Load() {
-					select {
-					case openURLCh <- t.buildURL(urlPath, false):
-					default:
+			defer func() {
+				if r := recover(); r != nil {
+					slog.Error("panic in tray overlay open handler", "panic", r)
+				}
+			}()
+
+			for {
+				select {
+				case <-item.ClickedCh:
+					if !t.shuttingDown.Load() {
+						select {
+						case openURLCh <- t.buildURL(urlPath, false):
+						default:
+						}
 					}
+				case <-t.stopCh:
+					return
 				}
 			}
 		}(ov.item, ov.urlPath)
@@ -110,18 +123,36 @@ func (t *Tray) onReady(iconData []byte) {
 	copyURLCh := make(chan string, 1)
 	for _, ov := range t.copyItems {
 		go func(item *systray.MenuItem, urlPath string) {
-			for range item.ClickedCh {
-				if !t.shuttingDown.Load() {
-					select {
-					case copyURLCh <- t.buildURL(urlPath, true):
-					default:
+			defer func() {
+				if r := recover(); r != nil {
+					slog.Error("panic in tray overlay copy handler", "panic", r)
+				}
+			}()
+
+			for {
+				select {
+				case <-item.ClickedCh:
+					if !t.shuttingDown.Load() {
+						select {
+						case copyURLCh <- t.buildURL(urlPath, true):
+						default:
+						}
 					}
+				case <-t.stopCh:
+					return
 				}
 			}
 		}(ov.item, ov.urlPath)
 	}
 
-	go t.handleMenuClicks(openURLCh, copyURLCh)
+	go func() {
+		defer func() {
+			if r := recover(); r != nil {
+				slog.Error("panic in tray menu click handler", "panic", r)
+			}
+		}()
+		t.handleMenuClicks(openURLCh, copyURLCh)
+	}()
 
 	slog.Info("system tray initialized")
 }
@@ -130,6 +161,9 @@ func (t *Tray) onReady(iconData []byte) {
 func (t *Tray) handleMenuClicks(openURLCh, copyURLCh <-chan string) {
 	for {
 		select {
+		case <-t.stopCh:
+			return
+
 		// ── Open Browser ────────────────────────────────────────────────────
 		case <-t.menuOpenDefault.ClickedCh:
 			if !t.shuttingDown.Load() {
@@ -139,21 +173,49 @@ func (t *Tray) handleMenuClicks(openURLCh, copyURLCh <-chan string) {
 				// would prevent ClickedCh from being drained and cause all
 				// subsequent menu clicks to be silently dropped by systray's
 				// non-blocking send.
-				go t.openBrowserURL(t.buildURL("", false))
+				go func() {
+					defer func() {
+						if r := recover(); r != nil {
+							slog.Error("panic in openBrowserURL", "panic", r)
+						}
+					}()
+					t.openBrowserURL(t.buildURL("", false))
+				}()
 			}
 		case u := <-openURLCh:
 			if !t.shuttingDown.Load() {
-				go t.openBrowserURL(u)
+				go func() {
+					defer func() {
+						if r := recover(); r != nil {
+							slog.Error("panic in openBrowserURL", "panic", r)
+						}
+					}()
+					t.openBrowserURL(u)
+				}()
 			}
 
 		// ── Copy URL for Streaming ───────────────────────────────────────────
 		case <-t.menuCopyDefault.ClickedCh:
 			if !t.shuttingDown.Load() {
-				go copyToClipboard(t.buildURL("", true))
+				go func() {
+					defer func() {
+						if r := recover(); r != nil {
+							slog.Error("panic in copyToClipboard", "panic", r)
+						}
+					}()
+					copyToClipboard(t.buildURL("", true))
+				}()
 			}
 		case u := <-copyURLCh:
 			if !t.shuttingDown.Load() {
-				go copyToClipboard(u)
+				go func() {
+					defer func() {
+						if r := recover(); r != nil {
+							slog.Error("panic in copyToClipboard", "panic", r)
+						}
+					}()
+					copyToClipboard(u)
+				}()
 			}
 
 		// ── Exit ─────────────────────────────────────────────────────────────
@@ -170,6 +232,7 @@ func (t *Tray) handleMenuClicks(openURLCh, copyURLCh <-chan string) {
 // onExit is called when the tray is exiting
 func (t *Tray) onExit() {
 	t.shuttingDown.Store(true)
+	close(t.stopCh)
 	slog.Info("system tray exiting")
 }
 

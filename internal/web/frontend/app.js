@@ -140,6 +140,7 @@ let kmSubscribed = false;
 
 // Dirty flag: set to true whenever state changes. render() only redraws when dirty.
 let dirty = true;
+let wheelDirtyTimeoutId = null;
 
 let activeRenderers = [];
 let explicitMode = false;
@@ -147,6 +148,13 @@ let hasGamepadParam = false;
 let hasMouseParam = false;
 let keyboardParam = null;
 let forcedGamepadType = null;
+
+const _fontCache = {};
+function cachedFont(size, weight) {
+    weight = weight || 'normal';
+    const k = weight + '|' + size;
+    return _fontCache[k] || (_fontCache[k] = weight + ' ' + size + 'px "Segoe UI", sans-serif');
+}
 
 function markRendererDirty(types) {
     for (const renderer of activeRenderers) {
@@ -293,6 +301,11 @@ function applyKMFull(data) {
     kmState.mouseMove.y = 0;
     kmState.wheelUp = false;
     kmState.wheelDown = false;
+    kmState.wheelTimestamp = 0;
+    if (wheelDirtyTimeoutId) {
+        clearTimeout(wheelDirtyTimeoutId);
+        wheelDirtyTimeoutId = null;
+    }
     dirty = true;
     markRendererDirty(['mouse', 'keyboard']);
 }
@@ -317,8 +330,14 @@ function applyKMDelta(delta) {
         kmState.wheelUp = delta.wheelUp || false;
         kmState.wheelDown = delta.wheelDown || false;
         kmState.wheelTimestamp = performance.now();
-        // Schedule a redraw after wheel timeout so the highlight clears
-        setTimeout(() => { dirty = true; markRendererDirty(['mouse']); }, WHEEL_TIMEOUT_MS + 20);
+        if (wheelDirtyTimeoutId) clearTimeout(wheelDirtyTimeoutId);
+        wheelDirtyTimeoutId = setTimeout(() => {
+            wheelDirtyTimeoutId = null;
+            kmState.wheelUp = false;
+            kmState.wheelDown = false;
+            dirty = true;
+            markRendererDirty(['mouse']);
+        }, WHEEL_TIMEOUT_MS + 20);
     }
     dirty = true;
     markRendererDirty(['mouse', 'keyboard']);
@@ -701,11 +720,11 @@ function drawInputOverlay() {
          return;
      }
      if (overlayLoadFailed) {
-         ctx.fillStyle = '#ff0000';
-         ctx.font = '16px sans-serif';
-         ctx.textAlign = 'center';
-         ctx.fillText('Texture failed to load', canvasW / 2, canvasH / 2);
-         return;
+          ctx.fillStyle = '#ff0000';
+          ctx.font = cachedFont(16);
+          ctx.textAlign = 'center';
+          ctx.fillText('Texture failed to load', canvasW / 2, canvasH / 2);
+          return;
      }
      if (!overlayReady) return;
  
@@ -744,20 +763,14 @@ function drawInputOverlay() {
              }
              case 4: {
                  // Mouse wheel — 4 horizontal frames: neutral / middle-pressed / scroll-up / scroll-down
-                 const now = performance.now();
-                 const wheelExpired = (now - kmState.wheelTimestamp) > WHEEL_TIMEOUT_MS;
-                 if (wheelExpired) {
-                     kmState.wheelUp = false;
-                     kmState.wheelDown = false;
-                 }
                  ioDrawSprite(mu, mv, mw, mh, dx, dy, dw, dh);
                  if (kmState.mouseButtons[3]) {
                      ioDrawSprite(mu + (mw + OVERLAY_SPRITE_BORDER), mv, mw, mh, dx, dy, dw, dh);
                  }
-                 if (kmState.wheelUp && !wheelExpired) {
+                 if (kmState.wheelUp) {
                      ioDrawSprite(mu + (mw + OVERLAY_SPRITE_BORDER) * 2, mv, mw, mh, dx, dy, dw, dh);
                  }
-                 if (kmState.wheelDown && !wheelExpired) {
+                 if (kmState.wheelDown) {
                      ioDrawSprite(mu + (mw + OVERLAY_SPRITE_BORDER) * 3, mv, mw, mh, dx, dy, dw, dh);
                  }
                  break;
@@ -999,7 +1012,8 @@ function drawMouseRenderer(renderer) {
     c.fillStyle = bodyFillColor;
     c.strokeStyle = COLORS.outline;
     c.lineWidth = 2;
-    const bodyPath = new Path2D(cfg.body.path);
+    if (!cfg.body._cachedPath) cfg.body._cachedPath = new Path2D(cfg.body.path);
+    const bodyPath = cfg.body._cachedPath;
     c.fill(bodyPath);
     c.stroke(bodyPath);
     c.restore();
@@ -1021,7 +1035,7 @@ function drawMouseRenderer(renderer) {
 
         c.fillStyle = pressed ? COLORS.buttonLabelPressed : COLORS.buttonLabel;
         const fontSize = btn.width > 30 ? 12 : 9;
-        c.font = `bold ${fontSize}px "Segoe UI", sans-serif`;
+        c.font = cachedFont(fontSize, 'bold');
         c.textAlign = 'center';
         c.textBaseline = 'middle';
         c.fillText(btn.label, btn.x + btn.width / 2, btn.y + btn.height / 2);
@@ -1032,8 +1046,7 @@ function drawMouseRenderer(renderer) {
     const w = cfg.wheel;
     const mb = cfg.buttons.middle;
     const middlePressed = kmState.mouseButtons[mb.code] === true;
-    const wheelActive = (kmState.wheelUp || kmState.wheelDown) &&
-        (performance.now() - kmState.wheelTimestamp <= WHEEL_TIMEOUT_MS);
+    const wheelActive = kmState.wheelUp || kmState.wheelDown;
 
     // Middle button border area (fill excludes wheel region to prevent overlap darkening)
     c.fillStyle = middlePressed ? COLORS.buttonPressed : COLORS.buttonDefault;
@@ -1104,7 +1117,7 @@ function drawMouseRenderer(renderer) {
         }
     } else {
         c.fillStyle = COLORS.buttonLabel;
-        c.font = 'bold 12px "Segoe UI", sans-serif';
+        c.font = cachedFont(12, 'bold');
         c.textAlign = 'center';
         c.textBaseline = 'middle';
         c.fillText(mb.label, mb.x + mb.width / 2, mb.y + mb.height / 2);
@@ -1204,7 +1217,7 @@ function drawKeyboardRenderer(renderer) {
         renderer.ctx.fillStyle = COLORS.buttonDefault;
         renderer.ctx.fillRect(0, 0, renderer.canvasW, renderer.canvasH);
         renderer.ctx.fillStyle = COLORS.textDim;
-        renderer.ctx.font = '14px "Segoe UI", sans-serif';
+        renderer.ctx.font = cachedFont(14);
         renderer.ctx.textAlign = 'center';
         renderer.ctx.textBaseline = 'middle';
         renderer.ctx.fillText('Loading keyboard...', renderer.canvasW / 2, renderer.canvasH / 2);
@@ -1244,8 +1257,8 @@ function drawKeyboardRenderer(renderer) {
         const fontSize = Math.max(8, Math.min(14, baseFontSize));
         const isSingleChar = key.label.length === 1;
         c.font = isSingleChar
-            ? `bold ${fontSize}px "Segoe UI", sans-serif`
-            : `${Math.max(7, fontSize - 2)}px "Segoe UI", sans-serif`;
+            ? cachedFont(fontSize, 'bold')
+            : cachedFont(Math.max(7, fontSize - 2));
 
         c.fillText(key.label, key.x + key.w / 2, key.y + key.h / 2);
     }
@@ -1289,11 +1302,11 @@ function render() {
 
 function drawDisconnected() {
     ctx.fillStyle = COLORS.textDim;
-    ctx.font = '20px "Segoe UI", sans-serif';
+    ctx.font = cachedFont(20);
     ctx.textAlign = 'center';
     ctx.textBaseline = 'middle';
     ctx.fillText('No controller connected', canvasW / 2, canvasH / 2);
-    ctx.font = '14px "Segoe UI", sans-serif';
+    ctx.font = cachedFont(14);
     ctx.fillText('Connect a gamepad and it will appear here', canvasW / 2, canvasH / 2 + 30);
 }
 
@@ -1328,21 +1341,26 @@ function drawBody(cfg) {
         ctx.save();
 
         if (body.viewBox) {
-            const [vbX, vbY, vbWidth, vbHeight] = body.viewBox.split(/[\s,]+/).map(Number);
+            if (!body._parsedVB) {
+                const parts = body.viewBox.split(/[\s,]+/).map(Number);
+                body._parsedVB = { x: parts[0], y: parts[1], w: parts[2], h: parts[3] };
+            }
+            const vb = body._parsedVB;
             const targetX = body.x || 0;
             const targetY = body.y || 0;
             const targetWidth = body.width || 500;
             const targetHeight = body.height || 330;
-            const scale = Math.min(targetWidth / vbWidth, targetHeight / vbHeight);
-            const scaledWidth = vbWidth * scale;
-            const scaledHeight = vbHeight * scale;
-            const offsetX = targetX + (targetWidth - scaledWidth) / 2 - vbX * scale;
-            const offsetY = targetY + (targetHeight - scaledHeight) / 2 - vbY * scale;
+            const scale = Math.min(targetWidth / vb.w, targetHeight / vb.h);
+            const scaledWidth = vb.w * scale;
+            const scaledHeight = vb.h * scale;
+            const offsetX = targetX + (targetWidth - scaledWidth) / 2 - vb.x * scale;
+            const offsetY = targetY + (targetHeight - scaledHeight) / 2 - vb.y * scale;
             ctx.translate(offsetX, offsetY);
             ctx.scale(scale, scale);
         }
 
-        const path = new Path2D(body.path);
+        if (!body._cachedPath) body._cachedPath = new Path2D(body.path);
+        const path = body._cachedPath;
         ctx.fill(path);
         ctx.stroke(path);
         ctx.restore();
@@ -1468,7 +1486,7 @@ function drawFaceButtons(cfg) {
         if (psSymbols[labelText]) {
             psSymbols[labelText](pos.x, pos.y, r * 0.5);
         } else {
-            ctx.font = `${fontWeight} ${fontSize}px "Segoe UI", sans-serif`;
+            ctx.font = cachedFont(fontSize, fontWeight);
             ctx.textAlign = 'center';
             ctx.textBaseline = 'middle';
             ctx.fillText(labelText, pos.x, pos.y + 1);
@@ -1501,7 +1519,7 @@ function drawShoulderButtons(cfg) {
 
         if (labelText) {
             ctx.fillStyle = pressed ? COLORS.buttonLabelPressed : COLORS.buttonLabel;
-            ctx.font = `${fontWeight} ${fontSize}px "Segoe UI", sans-serif`;
+            ctx.font = cachedFont(fontSize, fontWeight);
             ctx.textAlign = 'center';
             ctx.textBaseline = 'middle';
             ctx.fillText(labelText, s.x + s.width / 2, s.y + s.height / 2);
@@ -1552,7 +1570,7 @@ function drawTriggerLabels(cfg) {
         const fontSize = tLabel.fontSize || defaultLabelConfig.fontSize || 13;
         const fontWeight = tLabel.fontWeight || defaultLabelConfig.fontWeight || 'normal';
         ctx.fillStyle = COLORS.buttonLabel;
-        ctx.font = `${fontWeight} ${fontSize}px "Segoe UI", sans-serif`;
+        ctx.font = cachedFont(fontSize, fontWeight);
         ctx.textAlign = 'center';
         ctx.textBaseline = 'middle';
         ctx.fillText(labelText, t.x + t.width / 2, t.y + t.height * 0.3);
@@ -1655,7 +1673,7 @@ function drawCenterButtons(cfg) {
 
             if (labelText) {
                 ctx.fillStyle = pressed ? COLORS.buttonLabelPressed : COLORS.buttonLabel;
-                ctx.font = `${fontWeight} ${fontSize}px "Segoe UI", sans-serif`;
+                ctx.font = cachedFont(fontSize, fontWeight);
                 ctx.textAlign = 'center';
                 ctx.textBaseline = 'middle';
                 ctx.fillText(labelText, b.x, b.y + 1);
@@ -1673,7 +1691,7 @@ function drawCenterButtons(cfg) {
 
             if (labelText) {
                 ctx.fillStyle = pressed ? COLORS.buttonLabelPressed : COLORS.buttonLabel;
-                ctx.font = `${fontWeight} ${fontSize}px "Segoe UI", sans-serif`;
+                ctx.font = cachedFont(fontSize, fontWeight);
                 ctx.textAlign = 'center';
                 ctx.textBaseline = 'middle';
                 ctx.fillText(labelText, b.x + b.width / 2, b.y + b.height / 2 + 1);

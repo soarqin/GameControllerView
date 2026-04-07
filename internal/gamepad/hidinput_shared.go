@@ -166,7 +166,8 @@ func resolveButtonTarget(mapping *DeviceMapping, buttonUsage uint16) string {
 	return ""
 }
 
-// applyButton sets the appropriate boolean field on state for the given target name.
+// applyButton sets the appropriate field on state for the given semantic target name.
+// Handles buttons, stick presses, triggers (digital press → 1.0), and dpad directions.
 func applyButton(state *GamepadState, target string) {
 	switch target {
 	case "a":
@@ -181,6 +182,10 @@ func applyButton(state *GamepadState, target string) {
 		state.Buttons.LB = true
 	case "rb":
 		state.Buttons.RB = true
+	case "lt":
+		state.Triggers.LT.Value = 1.0
+	case "rt":
+		state.Triggers.RT.Value = 1.0
 	case "back":
 		state.Buttons.Back = true
 	case "start":
@@ -195,6 +200,14 @@ func applyButton(state *GamepadState, target string) {
 		state.Sticks.Left.Pressed = true
 	case "rs":
 		state.Sticks.Right.Pressed = true
+	case "dpup":
+		state.Dpad.Up = true
+	case "dpdown":
+		state.Dpad.Down = true
+	case "dpleft":
+		state.Dpad.Left = true
+	case "dpright":
+		state.Dpad.Right = true
 	}
 }
 
@@ -484,46 +497,6 @@ func normalize16bit(raw uint16) float64 {
 	return v
 }
 
-// applySDLButtonTarget maps SDL semantic button/dpad targets to GamepadState.
-func applySDLButtonTarget(state *GamepadState, target string) {
-	switch target {
-	case "a":
-		state.Buttons.A = true
-	case "b":
-		state.Buttons.B = true
-	case "x":
-		state.Buttons.X = true
-	case "y":
-		state.Buttons.Y = true
-	case "lb":
-		state.Buttons.LB = true
-	case "rb":
-		state.Buttons.RB = true
-	case "lt":
-		state.Triggers.LT.Value = 1.0
-	case "rt":
-		state.Triggers.RT.Value = 1.0
-	case "back":
-		state.Buttons.Back = true
-	case "start":
-		state.Buttons.Start = true
-	case "guide":
-		state.Buttons.Guide = true
-	case "ls":
-		state.Sticks.Left.Pressed = true
-	case "rs":
-		state.Sticks.Right.Pressed = true
-	case "touchpad":
-		state.Buttons.Touchpad = true
-	case "capture":
-		state.Buttons.Capture = true
-	case "dpup":
-		state.Dpad.Up = true
-	case "dpdown":
-		state.Dpad.Down = true
-	case "dpleft":
-		state.Dpad.Left = true
-	case "dpright":
-		state.Dpad.Right = true
-	}
-}
+// applySDLButtonTarget is an alias for applyButton, kept for call-site clarity.
+// Deprecated: use applyButton directly.
+var applySDLButtonTarget = applyButton

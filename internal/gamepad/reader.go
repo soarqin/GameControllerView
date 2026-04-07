@@ -9,8 +9,11 @@ import (
 	"time"
 )
 
+// sdlMappingsMu protects globalSDLMappings from concurrent read/write.
+var sdlMappingsMu sync.RWMutex
+
 // globalSDLMappings holds SDL gamecontrollerdb entries loaded at startup.
-// Keyed by (VendorID, ProductID). Set by LoadSDLDB(); nil if not loaded.
+// Keyed by (VendorID, ProductID). Protected by sdlMappingsMu.
 var globalSDLMappings map[deviceKey]*SDLMapping
 
 // sdlPlatformName maps runtime.GOOS values to the platform strings used in
@@ -62,16 +65,21 @@ func LoadSDLDB(externalPath string) {
 		}
 	}
 
+	sdlMappingsMu.Lock()
 	globalSDLMappings = merged
+	sdlMappingsMu.Unlock()
 }
 
 // lookupSDLMapping returns the SDL mapping for a device's VID/PID, or nil if
 // no mapping was loaded or none matches.
 func lookupSDLMapping(vendorID, productID uint16) *SDLMapping {
-	if globalSDLMappings == nil {
+	sdlMappingsMu.RLock()
+	m := globalSDLMappings
+	sdlMappingsMu.RUnlock()
+	if m == nil {
 		return nil
 	}
-	return globalSDLMappings[deviceKey{VendorID: vendorID, ProductID: productID}]
+	return m[deviceKey{VendorID: vendorID, ProductID: productID}]
 }
 
 // joystickKey is a unified key for both XInput slots (0-3) and HID device handles.
@@ -152,7 +160,15 @@ func NewReader() *Reader {
 }
 
 // SetDeadzone sets the analog stick deadzone threshold (0.0-1.0).
-func (r *Reader) SetDeadzone(dz float64) { r.deadzone = dz }
+// Values outside [0, 1] are clamped.
+func (r *Reader) SetDeadzone(dz float64) {
+	if dz < 0 {
+		dz = 0
+	} else if dz > 1 {
+		dz = 1
+	}
+	r.deadzone = dz
+}
 
 // SetPollDelay sets the interval between XInput polling cycles.
 func (r *Reader) SetPollDelay(d time.Duration) { r.pollDelay = d }

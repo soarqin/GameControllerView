@@ -162,36 +162,34 @@ func (b *Broadcaster) SendInitialKMState(c *Client) {
 	c.Send(data)
 }
 
+// marshalOrLog marshals v to JSON, logging on failure.
+func marshalOrLog(label string, v any) ([]byte, bool) {
+	data, err := json.Marshal(v)
+	if err != nil {
+		slog.Error("error marshaling "+label, "error", err)
+		return nil, false
+	}
+	return data, true
+}
+
 // broadcastFull marshals and broadcasts a full state message.
 // All state is passed by value — no lock needed.
 func (b *Broadcaster) broadcastFull(seq int64, state gamepad.GamepadState, playerIndex int) {
-	msg := NewFullMessage(seq, &state)
-	data, err := json.Marshal(msg)
-	if err != nil {
-		slog.Error("error marshaling full message", "error", err)
-		return
+	if data, ok := marshalOrLog("full message", NewFullMessage(seq, &state)); ok {
+		b.hub.BroadcastToPlayer(data, playerIndex)
 	}
-	b.hub.BroadcastToPlayer(data, playerIndex)
 }
 
 // broadcastDelta marshals and broadcasts a delta message.
 func (b *Broadcaster) broadcastDelta(seq int64, delta *gamepad.DeltaChanges, playerIndex int) {
-	msg := NewDeltaMessage(seq, delta)
-	data, err := json.Marshal(msg)
-	if err != nil {
-		slog.Error("error marshaling delta message", "error", err)
-		return
+	if data, ok := marshalOrLog("delta message", NewDeltaMessage(seq, delta)); ok {
+		b.hub.BroadcastToPlayer(data, playerIndex)
 	}
-	b.hub.BroadcastToPlayer(data, playerIndex)
 }
 
 // broadcastKMDelta marshals and broadcasts a keyboard/mouse delta message.
 func (b *Broadcaster) broadcastKMDelta(seq int64, delta *input.KeyMouseDelta) {
-	msg := NewKMDeltaMessage(seq, delta)
-	data, err := json.Marshal(msg)
-	if err != nil {
-		slog.Error("error marshaling km delta message", "error", err)
-		return
+	if data, ok := marshalOrLog("km delta message", NewKMDeltaMessage(seq, delta)); ok {
+		b.hub.BroadcastKeyMouse(data)
 	}
-	b.hub.BroadcastKeyMouse(data)
 }

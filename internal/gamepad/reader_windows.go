@@ -331,6 +331,9 @@ func (r *Reader) getOrInitHIDDevice(hDevice uintptr) *hidDeviceInfo {
 	r.mu.Unlock()
 	dev := initHIDDevice(hDevice)
 	r.mu.Lock()
+	if existing, ok := r.hidDevices[hDevice]; ok {
+		return existing
+	}
 	if dev != nil {
 		// Suppress HID devices whose VID/PID matches a currently connected
 		// XInput device. XInput emulation software (Steam, BetterJoy) creates
@@ -407,7 +410,6 @@ func (r *Reader) disconnectJoystick(key joystickKey) {
 		return
 	}
 	playerIndex := r.getPlayerIndexLocked(key)
-	slog.Info("gamepad disconnected", "player", playerIndex, "name", info.name, "source", info.sourceType)
 
 	// Decrement XInput VID/PID tracking count so that HID devices with the
 	// same VID/PID can be registered again after the XInput device is gone.
@@ -429,18 +431,24 @@ func (r *Reader) disconnectJoystick(key joystickKey) {
 	r.joystickOrder = newOrder
 
 	wasActive := r.hasActive && r.activeKey == key
-	r.mu.Unlock()
-
 	if !wasActive {
+		if info.sourceType == "hid" && info.hDevice != 0 {
+			delete(r.hidDevices, info.hDevice)
+		}
+		r.mu.Unlock()
+		slog.Info("gamepad disconnected", "player", playerIndex, "name", info.name, "source", info.sourceType)
 		return
 	}
 
 	// Active controller disconnected: promote the next available one.
-	r.mu.Lock()
 	r.hasActive = false
 	if len(r.joystickOrder) == 0 {
+		if info.sourceType == "hid" && info.hDevice != 0 {
+			delete(r.hidDevices, info.hDevice)
+		}
 		r.state = GamepadState{}
 		r.mu.Unlock()
+		slog.Info("gamepad disconnected", "player", playerIndex, "name", info.name, "source", info.sourceType)
 		r.emitState()
 		return
 	}
@@ -454,8 +462,12 @@ func (r *Reader) disconnectJoystick(key joystickKey) {
 	r.state.Name = nextInfo.name
 	r.state.ControllerType = nextInfo.mapping.Name
 	r.state.PlayerIndex = nextPlayer
+	if info.sourceType == "hid" && info.hDevice != 0 {
+		delete(r.hidDevices, info.hDevice)
+	}
 	r.mu.Unlock()
 
+	slog.Info("gamepad disconnected", "player", playerIndex, "name", info.name, "source", info.sourceType)
 	slog.Info("active controller promoted", "player", nextPlayer, "name", nextInfo.name)
 	r.emitState()
 }

@@ -77,7 +77,9 @@ func (s *Server) ListenAndServe() error {
 			UptimeSeconds: int64(time.Since(s.startTime).Seconds()),
 			Listeners:     map[string]string{"addr": s.addr},
 		}
-		json.NewEncoder(w).Encode(resp)
+		if err := json.NewEncoder(w).Encode(resp); err != nil {
+			slog.Error("error encoding health response", "error", err)
+		}
 	})
 
 	// WebSocket endpoint

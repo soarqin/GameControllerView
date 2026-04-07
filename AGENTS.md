@@ -446,6 +446,8 @@ Canvas dimensions are auto-computed from the config layout by `computeKeyboardDi
 The system tray provides menu access when running in GUI mode (double-clicked executable). Key points:
 - **Thread locking**: `Tray.Run()` calls `runtime.LockOSThread()` before `systray.Run()` because the systray library's `init()` locks the main goroutine (assuming `Run()` is called from `main()`), but InputView calls it from a spawned goroutine. Without explicit locking, Go's async preemption can migrate the goroutine between OS threads, breaking the Windows message loop (which is thread-bound). This caused the tray icon to become completely unresponsive after some time.
 - **Non-blocking menu handling**: Menu clicks processed in a dedicated goroutine to prevent Windows message loop deadlocks
+- **Tray shutdown broadcast**: `Tray` owns a `stopCh` closed from `onExit()`. Overlay sub-item aggregators and the menu-click handler `select` on this channel so goroutines exit cleanly even if `systray` never closes `ClickedCh`.
+- **Tray goroutine panic recovery**: Long-lived tray goroutines and async browser/clipboard launches wrap work in `defer`/`recover` and log via `slog.Error`, preventing a panic in one handler from silently killing tray functionality.
 - **Atomic shutdown flag**: Prevents duplicate shutdown requests and race conditions
 - **`openBrowserURL` runs in its own goroutine**: `exec.Command(...).Start()` can stall on Windows under certain conditions (antivirus scanning, disk pressure). If `openBrowserURL` blocked inside `handleMenuClicks`, the select loop would stop draining `ClickedCh`; since `systray` uses a non-blocking send to that channel, all subsequent clicks would be silently dropped, causing the menu to become permanently unresponsive.
 - **"Open Browser" sub-menu**: At startup, `overlay.ScanDir()` enumerates the `overlays/` directory. "Open Browser" becomes a parent menu item with sub-items:
@@ -503,6 +505,10 @@ Two rendering engines still coexist inside that architecture, selected by the `?
 **Built-in keyboard renderer**: Explicit `?keyboard=<name>` mode now uses a geometric row-based layout engine. `computeKeyboardLayout(config)` flattens keyboard JSON rows into positioned `{ key, label, scancode, x, y, w, h }` entries, caching the result on `renderer.keyboardLayout`. `drawKeyboardRenderer()` renders rounded keycaps with labels and highlights pressed keys from `kmState.keys` using `COLORS.buttonPressed`. Missing keyboard configs keep the placeholder text instead of throwing.
 
 **Dirty-flag rendering**: Legacy mode still uses the global `dirty` flag. Explicit mode adds per-renderer dirty flags so gamepad updates only dirty gamepad canvases, while `km_full` / `km_delta` also dirty the mouse and keyboard canvases.
+
+**Frontend draw-call caching**: `app.js` caches reusable `Path2D` instances on `body` config objects (`_cachedPath`), caches parsed SVG `viewBox` values on `body._parsedVB`, and caches frequently reused Segoe UI font strings via `cachedFont(size, weight)` so 60fps draw paths avoid rebuilding identical Canvas helper objects every frame.
+
+**Wheel highlight expiry**: Keyboard/mouse wheel highlight expiry is driven by the `applyKMDelta()` message handler, not per-frame render checks. A single `wheelDirtyTimeoutId` clears any previous timeout before scheduling the next wheel reset, preventing timeout leaks and avoiding repeated `performance.now()` expiry work inside overlay/mouse draw paths.
 
 **Overlay element sorting**: `cfg.elements` are sorted by `z_level` once when the config JSON is loaded (`loadInputOverlayConfig`), not on every animation frame. The sorted array is mutated in-place on the `overlayConfig` object.
 
@@ -578,6 +584,8 @@ The mouse renderer is defined by the `MOUSE_CONFIG` constant and `drawMouseRende
 ### Modifying Canvas Rendering
 
 All drawing logic is in `internal/web/frontend/app.js` in `drawController()` and its sub-functions. Button positions and sizes are controlled by `configs/*.json`, colors by `COLORS` constants.
+
+For hot draw paths, prefer one-time parsing/caching on config objects or module-level caches over per-frame object/string construction.
 
 ### Modifying Poll Frequency
 

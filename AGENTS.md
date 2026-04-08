@@ -125,10 +125,19 @@ InputView/
     │   └── generate.go                 # Input Overlay JSON generation + high-level Convert() pipeline
     └── web/
         ├── embed.go                    # go:embed embeds frontend/ static files; minifies JS/CSS/HTML/JSON at startup and pre-compresses with gzip; exports FrontendFS() and GzipCache()
-        └── frontend/                   # Frontend static files
+        └── frontend/                   # Frontend static files (loaded via <script> tags in dependency order)
             ├── index.html
             ├── styles.css
-            ├── app.js                  # WebSocket client, URL param parsing, Canvas rendering
+            ├── constants.js            # Constants, scancode maps, key labels, COLORS, IO button map, MOUSE_CONFIG
+            ├── state.js                # Mutable state (gamepad, kmState, overlay, WebSocket), canvas refs, utility functions
+            ├── websocket.js            # WebSocket connection, reconnection, message dispatch, state merging
+            ├── config.js               # Configuration loading (gamepad, keyboard, Input Overlay config+texture)
+            ├── overlay-renderer.js     # Input Overlay texture atlas renderer (all 10 element types)
+            ├── gamepad-renderer.js     # Built-in geometric gamepad renderer (body, dpad, buttons, sticks, triggers)
+            ├── mouse-renderer.js       # Built-in geometric mouse renderer
+            ├── keyboard-renderer.js    # Built-in geometric keyboard renderer (row-based layout engine)
+            ├── canvas.js               # Canvas setup (high-DPI, simple mode), render loop, per-renderer management
+            ├── init.js                 # Initialization: URL param parsing, multi-canvas setup, bootstrap
             └── configs/                # Gamepad layout JSON configs
                 ├── xbox.json
                 ├── playstation.json
@@ -506,7 +515,7 @@ Two rendering engines still coexist inside that architecture, selected by the `?
 
 **Dirty-flag rendering**: Legacy mode still uses the global `dirty` flag. Explicit mode adds per-renderer dirty flags so gamepad updates only dirty gamepad canvases, while `km_full` / `km_delta` also dirty the mouse and keyboard canvases.
 
-**Frontend draw-call caching**: `app.js` caches reusable `Path2D` instances on `body` config objects (`_cachedPath`), caches parsed SVG `viewBox` values on `body._parsedVB`, and caches frequently reused Segoe UI font strings via `cachedFont(size, weight)` so 60fps draw paths avoid rebuilding identical Canvas helper objects every frame.
+**Frontend draw-call caching**: The frontend caches reusable `Path2D` instances on `body` config objects (`_cachedPath`), caches parsed SVG `viewBox` values on `body._parsedVB`, and caches frequently reused Segoe UI font strings via `cachedFont(size, weight)` in `state.js` so 60fps draw paths avoid rebuilding identical Canvas helper objects every frame.
 
 **Wheel highlight expiry**: Keyboard/mouse wheel highlight expiry is driven by the `applyKMDelta()` message handler, not per-frame render checks. A single `wheelDirtyTimeoutId` clears any previous timeout before scheduling the next wheel reset, preventing timeout leaks and avoiding repeated `performance.now()` expiry work inside overlay/mouse draw paths.
 
@@ -583,7 +592,7 @@ The mouse renderer is defined by the `MOUSE_CONFIG` constant and `drawMouseRende
 
 ### Modifying Canvas Rendering
 
-All drawing logic is in `internal/web/frontend/app.js` in `drawController()` and its sub-functions. Button positions and sizes are controlled by `configs/*.json`, colors by `COLORS` constants.
+All drawing logic is in `internal/web/frontend/gamepad-renderer.js` in `drawController()` and its sub-functions. Button positions and sizes are controlled by `configs/*.json`, colors by `COLORS` constants in `constants.js`.
 
 For hot draw paths, prefer one-time parsing/caching on config objects or module-level caches over per-frame object/string construction.
 

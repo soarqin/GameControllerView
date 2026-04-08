@@ -193,7 +193,7 @@ goroutine: HTTP Server                ← 静态文件 + /ws WebSocket 端点
 
 1. `internal/gamepad/mapping_table.go` — 在 `knownDevices` 中添加 VID/PID → `DeviceMapping`
 2. `internal/web/frontend/configs/` — 添加布局 JSON
-3. `internal/web/frontend/app.js` — 在 `configMap` 中添加映射
+3. `internal/web/frontend/config.js` — 在 `configNameForType()` 中添加映射
 
 ### 修改轮询频率
 

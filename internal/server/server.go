@@ -73,7 +73,7 @@ func (s *Server) ListenAndServe() error {
 		w.Header().Set("Content-Type", "application/json")
 		resp := healthResponse{
 			Status:        "ok",
-			Version:       "0.3.0",
+			Version:       "0.3.1",
 			UptimeSeconds: int64(time.Since(s.startTime).Seconds()),
 			Listeners:     map[string]string{"addr": s.addr},
 		}

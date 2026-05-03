@@ -5,6 +5,7 @@ package gamepad
 import (
 	"fmt"
 	"log/slog"
+	"sort"
 	"strings"
 	"syscall"
 	"unicode/utf16"
@@ -416,6 +417,24 @@ func initHIDDevice(hDevice uintptr) *hidDeviceInfo {
 // ranges). Hat switch entries are excluded — SDL numbers axes and hats as
 // separate arrays, so SDL axis index N corresponds to the N-th non-hat value
 // cap usage.
+//
+// IMPORTANT: Entries are sorted by (usagePage, usage) at the end to emulate
+// SDL's DirectInput backend axis enumeration order. SDL's gamecontrollerdb.txt
+// entries with `0300xxxx`-prefixed GUIDs (bus=USB, DirectInput-style) are
+// authored against this enumeration: axes are presented in usage-code order
+// (X=0x30, Y=0x31, Z=0x32, Rx=0x33, Ry=0x34, Rz=0x35, Slider=0x36, Dial=0x37).
+//
+// HidP_GetValueCaps returns axes in HID descriptor *declaration* order, which
+// is **not** usage-sorted for many controllers. DualShock 4 and DualSense
+// declare axes in physical report-byte order (X, Y, Z, Rz, Rx, Ry) — meaning
+// raw axis index 3 is Rz, but the SDL DB Windows entry says axis 3 is
+// `lefttrigger` (assuming Rx). Without this sort, SDL's `lefttrigger:a3`,
+// `righttrigger:a4`, `righty:a5` get routed to (Rz, Rx, Ry) instead of
+// (Rx, Ry, Rz), producing the symptom "DualSense triggers and right-stick Y
+// are scrambled".
+//
+// Sorting by usage code aligns our raw-HID axis numbering with the
+// DirectInput convention that SDL DB Windows entries assume.
 func buildAxisOrder(valueCaps []hidpValueCaps) []hidAxisEntry {
 	var entries []hidAxisEntry
 	for i := range valueCaps {
@@ -438,6 +457,16 @@ func buildAxisOrder(valueCaps []hidpValueCaps) []hidAxisEntry {
 			})
 		}
 	}
+	// Stable sort by (usagePage, usage) so SDL DB axis indices line up with
+	// DirectInput's usage-sorted enumeration. SortStable preserves the
+	// declaration order for entries that share the same (page, usage), which
+	// matters when a HID descriptor declares duplicate axes.
+	sort.SliceStable(entries, func(i, j int) bool {
+		if entries[i].usagePage != entries[j].usagePage {
+			return entries[i].usagePage < entries[j].usagePage
+		}
+		return entries[i].usage < entries[j].usage
+	})
 	return entries
 }
 

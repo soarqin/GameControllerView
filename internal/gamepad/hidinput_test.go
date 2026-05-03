@@ -100,6 +100,70 @@ func TestResolveButtonTarget(t *testing.T) {
 	}
 }
 
+// TestSDLNameToControllerType guards the case-sensitive contract between the
+// HID SDL path (which calls this function) and the frontend's configNameForType()
+// in internal/web/frontend/config.js — whose configMap keys are lowercase
+// ("xbox", "playstation", "switch_pro"). Returning a value with mismatched
+// case silently falls through to the xbox default, producing the symptom
+// "PS4/PS5 controllers render with Xbox button layout".
+func TestSDLNameToControllerType(t *testing.T) {
+	tests := []struct {
+		name    string
+		sdlName string
+		want    string
+	}{
+		// PlayStation family — must return lowercase "playstation"
+		// (matches configMap key in internal/web/frontend/config.js).
+		{"DualSense", "DualSense Wireless Controller", "playstation"},
+		{"PS5 Controller", "PS5 Controller", "playstation"},
+		{"PS5 Access", "PS5 Access Controller", "playstation"},
+		{"PS4 Controller", "PS4 Controller", "playstation"},
+		{"Sony DualShock 4", "Sony DualShock 4", "playstation"},
+		{"Sony DualShock 4 V2", "Sony DualShock 4 V2", "playstation"},
+		{"PS3 Controller", "PS3 Controller", "playstation"},
+
+		// Switch Pro family — must return lowercase "switch_pro".
+		{"Pro Controller", "Pro Controller", "switch_pro"},
+		{"Switch Pro", "Switch Pro Controller", "switch_pro"},
+		{"Nintendo Switch", "Nintendo Switch Pro Controller", "switch_pro"},
+
+		// Default fallback — must return lowercase "xbox", not "Xbox".
+		{"Xbox 360", "Microsoft Xbox 360 Wireless Controller", "xbox"},
+		{"Generic", "Generic USB Joystick", "xbox"},
+		{"Empty", "", "xbox"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := sdlNameToControllerType(tt.sdlName)
+			if got != tt.want {
+				t.Errorf("sdlNameToControllerType(%q) = %q, want %q",
+					tt.sdlName, got, tt.want)
+			}
+			// Defensive: any returned identifier must equal its lowercase form,
+			// otherwise configNameForType() in config.js will silently fail.
+			if got != "" && got != toLowerASCII(got) {
+				t.Errorf("sdlNameToControllerType(%q) returned non-lowercase %q "+
+					"— frontend configMap requires lowercase keys",
+					tt.sdlName, got)
+			}
+		})
+	}
+}
+
+// toLowerASCII lowercases ASCII letters; we avoid pulling in strings here since
+// the test only needs a simple guard against accidental capitalisation.
+func toLowerASCII(s string) string {
+	b := make([]byte, len(s))
+	for i := 0; i < len(s); i++ {
+		c := s[i]
+		if c >= 'A' && c <= 'Z' {
+			c += 'a' - 'A'
+		}
+		b[i] = c
+	}
+	return string(b)
+}
+
 // TestApplyButton verifies that applyButton sets the correct GamepadState field
 // and that an empty/unknown target is a no-op (does not panic).
 func TestApplyButton(t *testing.T) {
@@ -135,6 +199,49 @@ func TestApplyButton(t *testing.T) {
 		zero := GamepadState{}
 		if state.Buttons != zero.Buttons {
 			t.Errorf("applyButton with unknown target modified Buttons: %+v", state.Buttons)
+		}
+	})
+}
+
+// TestApplyButtonTriggerGuard verifies that the digital trigger fallback in
+// applyButton does NOT overwrite an analog trigger value already set by axis
+// parsing. PlayStation L2/R2 fire both the analog axis and the digital button
+// simultaneously; before the guard, fully-pressed triggers always reported 1.0
+// regardless of analog input, and partially-pressed triggers snapped to 1.0
+// once the digital bit fired. With the guard, the analog value is preserved.
+func TestApplyButtonTriggerGuard(t *testing.T) {
+	t.Run("lt: digital press preserves prior analog value", func(t *testing.T) {
+		state := GamepadState{}
+		state.Triggers.LT.Value = 0.5 // axis already populated this
+		applyButton(&state, "lt")
+		if state.Triggers.LT.Value != 0.5 {
+			t.Errorf("LT.Value = %v, want 0.5 (analog should be preserved)", state.Triggers.LT.Value)
+		}
+	})
+
+	t.Run("rt: digital press preserves prior analog value", func(t *testing.T) {
+		state := GamepadState{}
+		state.Triggers.RT.Value = 0.97
+		applyButton(&state, "rt")
+		if state.Triggers.RT.Value != 0.97 {
+			t.Errorf("RT.Value = %v, want 0.97 (analog should be preserved)", state.Triggers.RT.Value)
+		}
+	})
+
+	t.Run("lt: digital press on zero analog value sets 1.0", func(t *testing.T) {
+		state := GamepadState{}
+		// LT.Value is zero (no analog input or analog deadzoned to 0).
+		applyButton(&state, "lt")
+		if state.Triggers.LT.Value != 1.0 {
+			t.Errorf("LT.Value = %v, want 1.0 (digital fallback)", state.Triggers.LT.Value)
+		}
+	})
+
+	t.Run("rt: digital press on zero analog value sets 1.0", func(t *testing.T) {
+		state := GamepadState{}
+		applyButton(&state, "rt")
+		if state.Triggers.RT.Value != 1.0 {
+			t.Errorf("RT.Value = %v, want 1.0 (digital fallback)", state.Triggers.RT.Value)
 		}
 	})
 }

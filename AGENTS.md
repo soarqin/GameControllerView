@@ -30,7 +30,7 @@ go run ./cmd/inputview --addr=:9090 --poll-rate=16 --deadzone=0.05 --mouse-sens=
 # CLI flags take priority over config file values
 
 # Open browser at http://localhost:8080
-# Health check: GET http://localhost:8080/health → {"status":"ok","version":"0.3.0","uptime_seconds":N,"listeners":{"addr":":8080"}}
+# Health check: GET http://localhost:8080/health → {"status":"ok","version":"0.3.1","uptime_seconds":N,"listeners":{"addr":":8080"}}
 ```
 
 No external DLL required. Gamepad input uses XInput (`xinput1_4.dll`, built into Windows 8+) for Xbox-compatible controllers and `hid.dll` (built into all Windows versions) for HID gamepads.
@@ -307,6 +307,8 @@ Non-XInput HID gamepads (PS4/PS5/Switch Pro/generic) are captured via the **same
 5. `HidP_GetUsages` — returns the list of currently pressed button usages (1-based)
 6. Button usages → `GamepadState` fields via `resolveButtonTarget()` + `applyButton()`
 
+**Hybrid trigger handling**: PlayStation L2/R2 (and many other dual-action triggers) report **both** an analog axis value AND a digital button bit when fully pressed. Axes are processed before buttons in both `parseHIDReportLegacy` and `parseHIDReportSDL`, so the digital fallback in `applyButton` (target `"lt"` / `"rt"`) is guarded by an `if state.Triggers.LT.Value == 0` check — without this guard, the digital bit would unconditionally overwrite the analog value with `1.0`, snapping any partial pull to fully-pressed. The guard preserves analog precision while still letting the digital bit serve as a fallback when no analog axis is present.
+
 **Preparsed data**: Fetched once per device via `GetRawInputDeviceInfoW(RIDI_PREPARSEDDATA)` and cached in `hidDeviceInfo`. Required for all `HidP_*` calls. Allocation must be at least 8-byte aligned (Go's `make([]byte)` satisfies this on all supported architectures).
 
 **Struct layout critical**: `hidpValueCaps` and `hidpButtonCaps` in `hidinput_windows.go` must exactly match the Windows SDK `HIDP_VALUE_CAPS` / `HIDP_BUTTON_CAPS` binary layout. The correct field order for `HIDP_VALUE_CAPS` after `IsAbsolute` is: `HasNull(1) Reserved(1) BitSize(2) ReportCount(2) Reserved2[5](10) UnitsExp(4) Units(4) LogicalMin(4) LogicalMax(4) PhysicalMin(4) PhysicalMax(4) [union 16 bytes]` — total 72 bytes. Any deviation causes all `UsageMin`/`UsageMax`/`LogicalMin`/`LogicalMax` fields to read as zero, silently breaking all axis and hat-switch parsing.
@@ -341,7 +343,7 @@ Nintendo controllers (VID 0x057E) have USB HID descriptors that define a **fake 
 - `LoadSDLDB(externalPath)` in `reader.go` always loads the **embedded** `gamecontrollerdb.txt` (via `go:embed` in `sdldb_embed.go`) as a base, then overlays an external file at `externalPath` if present. External entries take priority, allowing users to place an updated `gamecontrollerdb.txt` next to the executable without recompiling.
 - `lookupSDLMapping(vid, pid)` in `reader.go` looks up `globalSDLMappings` by VID/PID.
 - `initHIDDevice()` calls `lookupSDLMapping()` and stores `*SDLMapping` in `hidDeviceInfo.sdlMap`.
-- `buildAxisOrder()` enumerates value caps in report order (hat switch excluded), producing an ordered `[]hidAxisEntry` that maps SDL's 0-based axis index to (usagePage, usage).
+- `buildAxisOrder()` enumerates value caps and **stable-sorts the result by `(usagePage, usage)`** so SDL's 0-based axis index lines up with SDL's DirectInput backend enumeration. Hat switch is excluded. SDL DB Windows entries (GUIDs starting with `0300xxxx`) are authored against DirectInput's usage-sorted axis order (X=0x30, Y=0x31, Z=0x32, Rx=0x33, Ry=0x34, Rz=0x35). `HidP_GetValueCaps` returns axes in HID descriptor *declaration* order, which for DualShock 4 / DualSense follows physical report-byte order (X, Y, Z, Rz, Rx, Ry) — without the sort, SDL's `lefttrigger:a3`, `righttrigger:a4`, `righty:a5` resolve to (Rz, Rx, Ry) instead of (Rx, Ry, Rz), scrambling triggers and right-stick Y on every PS controller.
 - `parseHIDReport()` dispatches to `parseHIDReportSDL()` when `sdlMap != nil`, otherwise falls back to the legacy usage-code path.
 - `parseHIDReportSDL()` handles all SDL binding types:
   - `leftx:a0` → axis index 0 → full axis → `left_x`
@@ -353,7 +355,7 @@ Nintendo controllers (VID 0x057E) have USB HID descriptors that define a **fake 
   - `dpdown:b11` → button 11 → `Dpad.Down`
   - `+rightx:b9,-rightx:b4` → half-axis from buttons (N64 C-stick pattern) → `right_x`
 - SDL GUID byte layout: `[bus LE16][crc LE16][vid LE16][0x0000][pid LE16][0x0000][ver LE16][sig][data]`. VID/PID are little-endian uint16 at bytes 4-5 and 8-9.
-- `sdlNameToControllerType()` maps SDL controller names (e.g. "DualSense", "PS5") to frontend `controllerType` identifiers.
+- `sdlNameToControllerType()` maps SDL controller names (e.g. "DualSense", "PS5") to frontend `controllerType` identifiers. **Returned identifiers MUST be lowercase** (`"playstation"`, `"switch_pro"`, `"xbox"`) to match the `configMap` keys in `internal/web/frontend/config.js`. Returning capitalised values (e.g. `"PlayStation"`) silently falls through to the xbox default in `configNameForType()`, causing PS4/PS5 controllers to render with the Xbox layout. The legacy HID path passes `dev.mapping.Name` (already lowercase) directly, so it is naturally correct; only the SDL path goes through this helper.
 - `sdlPlatformName()` maps `runtime.GOOS` to the platform string used in gamecontrollerdb.txt: `"windows"` → `"Windows"`, `"linux"` → `"Linux"`, `"darwin"` → `"Mac OS X"`.
 - File location: place `gamecontrollerdb.txt` next to the executable (from [SDL_GameControllerDB](https://github.com/mdqinc/SDL_GameControllerDB)) to override bundled entries.
 

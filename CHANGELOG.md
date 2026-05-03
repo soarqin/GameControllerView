@@ -5,6 +5,26 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.3.1] - 2026-05-04
+
+### Added
+
+- Built-in mouse renderer: top-down view with left/right/middle/X1/X2 button states, scroll wheel indicator (200ms timeout), and movement direction arrow.
+- Built-in keyboard renderer: config-driven row-based layout, pressed-key highlighting, WASD gaming preset included.
+- URL parameters `?gamepad[=type]`, `?mouse=1`, `?keyboard=<preset>` for explicit device selection; freely combinable (e.g. `?gamepad&mouse=1&keyboard=wasd&simple=1`).
+- Multi-canvas layout: each device gets an independent Canvas element arranged via CSS flexbox with 16px gap.
+- External keyboard config support: place JSON files in `keyboards/` directory next to the executable; external configs take priority over built-in ones.
+- `--keyboard-dir` CLI flag and `keyboard-dir` TOML option (default: `keyboards`) for the external keyboard layout directory.
+- `KEY_NAME_TO_SCANCODE` lookup table mapping 80+ key names to uiohook scancodes.
+- Simple mode (`?simple=1`) works with multi-canvas: transparent background, all canvases visible at natural per-device dimensions.
+- `?btnalpha=<0..1>` URL parameter — per-button/key opacity for the built-in keyboard and mouse renderers, independent of `?alpha` (which now applies to body/background of gamepad, mouse, and keyboard).
+
+### Fixed
+
+- DualShock 4 / DualSense (PS4 / PS5) controllers reported scrambled L2/R2 triggers and right-stick Y on Windows. SDL `gamecontrollerdb.txt` Windows entries (GUIDs starting `0300xxxx`) are authored against SDL's DirectInput backend, which sorts axes by HID usage code (X, Y, Z, Rx, Ry, Rz). `HidP_GetValueCaps` returns axes in HID descriptor *declaration* order, which Sony controllers declare in physical report-byte order (X, Y, Z, Rz, Rx, Ry) — so SDL's `lefttrigger:a3` / `righttrigger:a4` / `righty:a5` resolved to (Rz, Rx, Ry) instead of (Rx, Ry, Rz). `buildAxisOrder()` now stable-sorts entries by `(usagePage, usage)` to match DirectInput enumeration, fixing every controller whose descriptor declares axes out of usage-code order.
+- PlayStation L2 / R2 analog triggers always snapped to 1.0 once the digital trigger button bit fired, discarding partial-pull precision. PS-style controllers report L2/R2 as both an analog axis AND a digital button bit; `parseHIDReport*` processes axes before buttons, and `applyButton` was unconditionally overwriting the analog value with `1.0`. The digital fallback for `"lt"`/`"rt"` is now guarded by `if Triggers.LT/RT.Value == 0`, so the digital bit only acts as a fallback when no analog axis is present.
+- `sdlNameToControllerType()` returned `"PlayStation"` / `"Xbox"` (capitalised) but the frontend's `configMap` keys are lowercase, causing `configNameForType()` to silently fall through to the xbox default and load the wrong layout for any SDL-DB-matched PS controller. Identifiers are now lowercase (`"playstation"`, `"switch_pro"`, `"xbox"`) to match the frontend contract.
+
 ## [0.3.0] - 2026-04-01
 
 ### Added
@@ -93,13 +113,3 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
-### Added
-
-- Built-in mouse renderer: top-down view with left/right/middle/X1/X2 button states, scroll wheel indicator (200ms timeout), and movement direction arrow
-- Built-in keyboard renderer: config-driven row-based layout, pressed-key highlighting, WASD gaming preset included
-- URL parameters `?gamepad[=type]`, `?mouse=1`, `?keyboard=<preset>` for explicit device selection; freely combinable (e.g. `?gamepad&mouse=1&keyboard=wasd&simple=1`)
-- Multi-canvas layout: each device gets an independent Canvas element arranged via CSS flexbox with 16px gap
-- External keyboard config support: place JSON files in `keyboards/` directory next to executable; external configs take priority over built-in ones
-- `--keyboard-dir` CLI flag and `keyboard-dir` TOML option (default: `keyboards`) for external keyboard layout directory
-- `KEY_NAME_TO_SCANCODE` lookup table mapping 80+ key names to uiohook scancodes
-- Simple mode (`?simple=1`) works with multi-canvas: transparent background, all canvases visible at natural per-device dimensions

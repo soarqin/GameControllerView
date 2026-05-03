@@ -168,6 +168,16 @@ func resolveButtonTarget(mapping *DeviceMapping, buttonUsage uint16) string {
 
 // applyButton sets the appropriate field on state for the given semantic target name.
 // Handles buttons, stick presses, triggers (digital press → 1.0), and dpad directions.
+//
+// Trigger handling note: PlayStation controllers (and many others with hybrid
+// triggers) report L2/R2 as BOTH an analog axis and a digital button — the
+// digital bit fires near full pull. parseHIDReportLegacy / parseHIDReportSDL
+// process axes BEFORE buttons, so a fully-pressed analog L2 first sets
+// Triggers.LT.Value to (e.g.) 0.97, then this function would unconditionally
+// overwrite it with 1.0. More damaging: a partially-pressed trigger (analog
+// 0.5) ALSO fires the digital bit on some firmwares, which would snap the
+// reported value to 1.0 and discard the half-press. We guard against this by
+// only writing 1.0 when the analog axis hasn't already set a non-zero value.
 func applyButton(state *GamepadState, target string) {
 	switch target {
 	case "a":
@@ -183,9 +193,15 @@ func applyButton(state *GamepadState, target string) {
 	case "rb":
 		state.Buttons.RB = true
 	case "lt":
-		state.Triggers.LT.Value = 1.0
+		// Preserve analog L2 value if axis already populated it.
+		if state.Triggers.LT.Value == 0 {
+			state.Triggers.LT.Value = 1.0
+		}
 	case "rt":
-		state.Triggers.RT.Value = 1.0
+		// Preserve analog R2 value if axis already populated it.
+		if state.Triggers.RT.Value == 0 {
+			state.Triggers.RT.Value = 1.0
+		}
 	case "back":
 		state.Buttons.Back = true
 	case "start":
@@ -216,8 +232,14 @@ func applyButton(state *GamepadState, target string) {
 // ---------------------------------------------------------------------------
 
 // sdlNameToControllerType maps well-known SDL controller name substrings to the
-// ControllerType identifiers used by the frontend (must match configMap in app.js).
-// Falls back to "Xbox" (generic layout) for unrecognised names.
+// ControllerType identifiers used by the frontend (must match configMap in
+// internal/web/frontend/config.js). The frontend's configMap keys are
+// lowercase, so this function MUST return lowercase identifiers — returning
+// "PlayStation" or "Xbox" with capitals causes configNameForType() to fall
+// through to its xbox default and load the wrong layout (e.g. PS4/PS5
+// controllers rendering with Xbox button positions and labels).
+//
+// Falls back to "xbox" (generic layout) for unrecognised names.
 func sdlNameToControllerType(sdlName string) string {
 	lower := strings.ToLower(sdlName)
 	switch {
@@ -225,12 +247,12 @@ func sdlNameToControllerType(sdlName string) string {
 		strings.Contains(lower, "dualshock") || strings.Contains(lower, "ps4") ||
 		strings.Contains(lower, "ps3") || strings.Contains(lower, "ps2") ||
 		strings.Contains(lower, "ps1"):
-		return "PlayStation"
+		return "playstation"
 	case strings.Contains(lower, "switch pro") || strings.Contains(lower, "pro controller") ||
 		strings.Contains(lower, "nintendo switch"):
 		return "switch_pro"
 	default:
-		return "Xbox"
+		return "xbox"
 	}
 }
 
